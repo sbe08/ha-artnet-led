@@ -143,7 +143,7 @@ light:
 
 ### channel_setup
 
-A string to customize the channel layout of your light.
+A string or list to customize the channel layout of your light. If a list is provided, fixed numeric values may be included.
 
 #### Definition
 

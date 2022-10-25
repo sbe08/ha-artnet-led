@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import functools
 
 import homeassistant.helpers.config_validation as cv
 import homeassistant.util.color as color_util
@@ -290,6 +291,10 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         self._channel_last_update = time.time()
         self.async_schedule_update_ha_state()
 
+    @staticmethod
+    def _default_calculation_function(channel_value):
+        return channel_value if isinstance(channel_value, int) else 0
+
     def get_target_values(self) -> list:
         """Return the Target DMX Values"""
         raise NotImplementedError()
@@ -504,7 +509,7 @@ class DmxWhite(DmxBaseLight):
 
         values = list()
         for channel in self._channel_setup:
-            calculation_function = switcher.get(channel, lambda: 0)
+            calculation_function = switcher.get(channel, functools.partial(self._default_calculation_function, channel))
             value = calculation_function()
             if value < 0 or value > 256:
                 log.warning(f"Value for channel {channel} isn't within bound: {value}")
@@ -594,7 +599,7 @@ class DmxRGB(DmxBaseLight):
 
         values = list()
         for channel in self._channel_setup:
-            calculation_function = switcher.get(channel, lambda: 0)
+            calculation_function = switcher.get(channel, functools.partial(self._default_calculation_function, channel))
             value = calculation_function()
             if value < 0 or value > 256:
                 log.warning(f"Value for channel {channel} isn't within bound: {value}")
@@ -682,7 +687,7 @@ class DmxRGBW(DmxBaseLight):
 
         values = list()
         for channel in self._channel_setup:
-            calculation_function = switcher.get(channel, lambda: 0)
+            calculation_function = switcher.get(channel, functools.partial(self._default_calculation_function, channel))
             log.info(f"DEBUGGY for {channel}: {calculation_function()}")
             value = calculation_function()
             if value < 0 or value > 256:
@@ -798,7 +803,7 @@ class DmxRGBWW(DmxBaseLight):
 
         values = list()
         for channel in self._channel_setup:
-            calculation_function = switcher.get(channel, lambda: 0)
+            calculation_function = switcher.get(channel, functools.partial(self._default_calculation_function, channel))
             value = calculation_function()
             if value < 0 or value > 256:
                 log.warning(f"Value for channel {channel} isn't within bound: {value}")
@@ -885,7 +890,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
                                 "\\d+(k|K)"
                             ),
                             vol.Optional(CONF_CHANNEL_SETUP, default=None): vol.Any(
-                                None, cv.string
+                                None, cv.string, cv.ensure_list
                             ),
                         }
                     ],
