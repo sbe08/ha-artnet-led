@@ -98,8 +98,9 @@ light:
           transition: 10
         - channel: 50
           name: sp4led_1_dimmer
-          default_level: 255
           type: fixed
+          channel_setup:
+            - 255
 ```
 
 ### Configuration variables
