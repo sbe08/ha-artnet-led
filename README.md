@@ -137,7 +137,6 @@ light:
     - **'16bit'** (65k steps)
     - **'24bit'** (too many steps)
     - **'32bit'** (don't ask steps)
-  - **default_level** (*Optional; value at startup, if state can't or shouldn't be restored*)
   - **min_temp** (Optional; default=2700K): Only applies for types 'color_temp' and 'rgbww'
   - **max_temp** (Optional; default=6500K): Only applies for types 'color_temp' and 'rgbww'
   - **channel_setup** (Optional; see [channel_setup](#channel_setup))
