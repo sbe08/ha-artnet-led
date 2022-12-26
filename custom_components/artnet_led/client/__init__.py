@@ -55,6 +55,7 @@ class DiagnosticsMode(Enum):
 
 class DiagnosticsPriority(Enum):
     # @formatter:off
+    DP_UNKNOWN  = 0x00
     DP_LOW      = 0x10
     DP_MED      = 0x40
     DP_HIGH     = 0x80
@@ -65,26 +66,28 @@ class DiagnosticsPriority(Enum):
 
 class NodeReport(Enum):
     # @formatter:off
-    RC_DEBUG            = (0x0000, "Booted in debug mode (Only used in development)")
-    RC_POWER_OK         = (0x0001, "Power On Tests successful")
-    RC_POWER_FAIL       = (0x0002, "Hardware tests failed at Power On")
-    RC_SOCKET_WR1       = (0x0003, "Last UDP from Node failed due to truncated length, \
-                                    Most likely caused by a collision.")
-    RC_PARSE_FAIL       = (0x0004, "Unable to identify last UDP transmission. Check OpCode and packet length.")
-    RC_UDP_FAIL         = (0x0005, "Unable to open Udp Socket in last transmission attempt")
-    RC_SH_NAME_OK       = (0x0006, "Confirms that Short Name programming via ArtAddress, was successful.")
-    RC_LO_NAME_OK       = (0x0007, "Confirms that Long Name programming via ArtAddress, was successful.")
-    RC_DMX_ERROR        = (0x0008, "DMX512 receive errors detected.")
-    RC_DMX_UDP_FULL     = (0x0009, "Ran out of internal DMX transmit buffers.")
-    RC_DMX_RX_FULL      = (0x000A, "Ran out of internal DMX Rx buffers.")
-    RC_SWITCH_ERR       = (0x000B, "Rx Universe switches conflict.")
-    RC_CONFIG_ERR       = (0x000C, "Product configuration does not match firmware.")
-    RC_DMX_SHORT        = (0x000D, "DMX output short detected. See GoodOutput field.")
-    RC_FIRMWARE_FAIL    = (0x000E, "Last attempt to upload new firmware failed.")
-    RC_USER_FAIL        = (0x000F, "User changed switch settings when address locked by remote programming.\
-                                    User changes ignored.")
-    RC_FACTORY_RES      = (0x0010, "Factory reset has occurred.")
+    RC_DEBUG            = 0x0000  # Booted in debug mode (Only used in development)
+    RC_POWER_OK         = 0x0001  # Power On Tests successful
+    RC_POWER_FAIL       = 0x0002  # Hardware tests failed at Power On
+    RC_SOCKET_WR1       = 0x0003  # Last UDP from Node failed due to truncated length, Most likely caused by a collision.
+    RC_PARSE_FAIL       = 0x0004  # Unable to identify last UDP transmission. Check OpCode and packet length.
+    RC_UDP_FAIL         = 0x0005  # Unable to open Udp Socket in last transmission attempt
+    RC_SH_NAME_OK       = 0x0006  # Confirms that Short Name programming via ArtAddress, was successful.
+    RC_LO_NAME_OK       = 0x0007  # Confirms that Long Name programming via ArtAddress, was successful.
+    RC_DMX_ERROR        = 0x0008  # DMX512 receive errors detected.
+    RC_DMX_UDP_FULL     = 0x0009  # Ran out of internal DMX transmit buffers.
+    RC_DMX_RX_FULL      = 0x000A  # Ran out of internal DMX Rx buffers.
+    RC_SWITCH_ERR       = 0x000B  # Rx Universe switches conflict.
+    RC_CONFIG_ERR       = 0x000C  # Product configuration does not match firmware.
+    RC_DMX_SHORT        = 0x000D  # DMX output short detected. See GoodOutput field.
+    RC_FIRMWARE_FAIL    = 0x000E  # Last attempt to upload new firmware failed.
+    RC_USER_FAIL        = 0x000F  # User changed switch settings when address locked by remote programming. User changes ignored.
+    RC_FACTORY_RES      = 0x0010  # Factory reset has occurred.
     # @formatter:on
+
+    def report(self, reply_count: int, status_message: str):
+        # The spec is very unclear regarding the 'ArtPollResponse' count, this is my best-guess.
+        return f"#{hex(self.value)[2:]} [{str(reply_count).zfill(4)}] {status_message}"
 
 
 class StyleCode(Enum):
@@ -143,11 +146,28 @@ class PortAddress:
         self._sub_net = port_address >> 9 & 0xF
         self._universe = port_address & 0x1FF
 
+    def __eq__(self, other):
+        return self.net == other.net and self.sub_net == other.sub_net and self.universe == other.universe
+
+    def __gt__(self, other):
+        return self.net > other.net or self.net == other.net and \
+            (self.sub_net > other.sub_net or self.sub_net == other.sub_net and self.universe > other.universe)
+
+    def __ge__(self, other):
+        return self.net >= other.net or self.net == other.net and \
+            (self.sub_net >= other.sub_net or self.sub_net == other.sub_net and self.universe >= other.universe)
+
+    def __str__(self):
+        return f"{self.net}:{self.sub_net}:{self.universe}"
+
+    def __hash__(self):
+        return self.port_address
+
 
 class IndicatorState(Enum):
     # @formatter:off
     UNKNOWN         = 0
-    LOCATE_IDENTITY = 1
+    LOCATE_IDENTIFY = 1
     MUTE_MODE       = 2
     NORMAL_MODE     = 3
     # @formatter:on
@@ -178,21 +198,21 @@ class PortType(Enum):
 
 @dataclass
 class GoodInput:
-    data_received = False
-    includes_dmx512_test_packets = False
-    includes_dmx512_sips = False
-    includes_dmx512_text_packets = False
-    input_disabled = False
-    receive_errors_detected = False
+    data_received: bool = False
+    includes_dmx512_test_packets: bool = False
+    includes_dmx512_sips: bool = False
+    includes_dmx512_text_packets: bool = False
+    input_disabled: bool = False
+    receive_errors_detected: bool = False
 
     @property
     def flags(self):
         return (self.data_received << 7) \
-               + (self.includes_dmx512_test_packets << 6) \
-               + (self.includes_dmx512_sips << 5) \
-               + (self.includes_dmx512_text_packets << 4) \
-               + (self.input_disabled << 3) \
-               + (self.receive_errors_detected << 2)
+            + (self.includes_dmx512_test_packets << 6) \
+            + (self.includes_dmx512_sips << 5) \
+            + (self.includes_dmx512_text_packets << 4) \
+            + (self.input_disabled << 3) \
+            + (self.receive_errors_detected << 2)
 
     @flags.setter
     def flags(self, flags):
@@ -206,25 +226,25 @@ class GoodInput:
 
 @dataclass
 class GoodOutputA:
-    data_being_transmitted = False
-    includes_dmx512_test_packets = False
-    includes_dmx512_sips = False
-    includes_dmx512_text_packets = False
-    merging_enabled = False
-    short_detected = False
-    merge_is_ltp = False
-    use_sacn = False
+    data_being_transmitted: bool = False
+    includes_dmx512_test_packets: bool = False
+    includes_dmx512_sips: bool = False
+    includes_dmx512_text_packets: bool = False
+    merging_enabled: bool = False
+    short_detected: bool = False
+    merge_is_ltp: bool = False
+    use_sacn: bool = False
 
     @property
     def flags(self):
         return (self.data_being_transmitted << 7) \
-               + (self.includes_dmx512_test_packets << 6) \
-               + (self.includes_dmx512_sips << 5) \
-               + (self.includes_dmx512_text_packets << 4) \
-               + (self.merging_enabled << 3) \
-               + (self.short_detected << 2) \
-               + (self.merge_is_ltp << 1) \
-               + self.use_sacn
+            + (self.includes_dmx512_test_packets << 6) \
+            + (self.includes_dmx512_sips << 5) \
+            + (self.includes_dmx512_text_packets << 4) \
+            + (self.merging_enabled << 3) \
+            + (self.short_detected << 2) \
+            + (self.merge_is_ltp << 1) \
+            + self.use_sacn
 
     @flags.setter
     def flags(self, flags):
@@ -238,23 +258,23 @@ class GoodOutputA:
         self.use_sacn = bool(flags & 1)
 
 
-@dataclass(init=True)
+@dataclass
 class Port:
-    input = False
-    output = False
-    type = PortType.DMX512
-    good_input = GoodInput()
-    good_output_a = GoodOutputA()
-    sw_in = 0
-    sw_out = 0
-    rdm_enabled = False
-    output_continuous = False
+    input: bool = False
+    output: bool = False
+    type: PortType = PortType.DMX512
+    good_input: GoodInput = GoodInput()
+    good_output_a: GoodOutputA = GoodOutputA()
+    sw_in: int = 0
+    sw_out: int = 0
+    rdm_enabled: bool = False
+    output_continuous: bool = True
 
     @property
     def port_types_flags(self) -> int:
         return (self.output << 7) \
-               + (self.input << 6) \
-               + self.type.value
+            + (self.input << 6) \
+            + self.type.value
 
     @port_types_flags.setter
     def port_types_flags(self, flags):
@@ -265,7 +285,7 @@ class Port:
     @property
     def good_output_b(self) -> int:
         return (self.rdm_enabled << 7) \
-               + (self.output_continuous << 6)
+            + (self.output_continuous << 6)
 
     @good_output_b.setter
     def good_output_b(self, flags):
@@ -278,6 +298,37 @@ class FailsafeState(Enum):
     ALL_OUTPUTS_0 = 1
     ALL_OUTPUTS_FULL = 2
     PLAYBACK_FAIL_SAFE_SCENE = 3
+
+
+@dataclass
+class ArtIpProgCommand:
+    enable_programming: bool = False
+    enable_dhcp: bool = False
+    program_default_gateway: bool = False
+    set_parameters_to_default: bool = False
+    program_ip_address: bool = False
+    program_subnet_mask: bool = False
+    program_port: bool = False
+
+    @property
+    def flags(self):
+        return (self.enable_programming << 7) \
+            + (self.enable_dhcp << 6) \
+            + (self.program_default_gateway << 4) \
+            + (self.set_parameters_to_default << 3) \
+            + (self.program_ip_address << 2) \
+            + (self.program_subnet_mask << 1) \
+            + self.program_port
+
+    @flags.setter
+    def flags(self, flags):
+        self.enable_programming = bool(flags >> 7 & 1)
+        self.enable_dhcp = bool(flags >> 6 & 1)
+        self.program_default_gateway = bool(flags >> 4 & 1)
+        self.set_parameters_to_default = bool(flags >> 3 & 1)
+        self.program_ip_address = bool(flags >> 2 & 1)
+        self.program_subnet_mask = bool(flags >> 1 & 1)
+        self.program_port = bool(flags & 1)
 
 
 class ArtBase:
@@ -307,6 +358,10 @@ class ArtBase:
         return packet[index], index + 1
 
     @staticmethod
+    def _take(packet: bytearray, n: int, index: int) -> (int, int):
+        return packet[index:index + n], index + n
+
+    @staticmethod
     def _append_int_lsb(packet: bytearray, number: int):
         packet.append(number & 0xFF)
         packet.append(number >> 8 & 0xFF)
@@ -318,22 +373,30 @@ class ArtBase:
 
     @staticmethod
     def _consume_int_lsb(packet: bytearray, index: int) -> (int, int):
+        if len(packet) < (index + 2 + 1):
+            raise SerializationException("Not enough bytes in packet.")
         [lsb, msb] = packet[index:index + 2]
         return msb << 8 + lsb, index + 2
 
     @staticmethod
     def _consume_int_msb(packet: bytearray, index: int) -> (int, int):
+        if len(packet) < (index + 2 + 1):
+            raise SerializationException("Not enough bytes in packet.")
         [msb, lsb] = packet[index:index + 2]
         return msb << 8 + lsb, index + 2
 
     @staticmethod
     def _consume_hex_number_lsb(packet: bytearray, index: int) -> (int, int):
+        if len(packet) < (index + 2 + 1):
+            raise SerializationException("Not enough bytes in packet.")
         lower = hex(packet[index])[2:].zfill(2)
         upper = hex(packet[index + 1])[2:].zfill(2)
         return int(upper + lower, 16), index + 2
 
     @staticmethod
     def _consume_hex_number_msb(packet: bytearray, index: int) -> (int, int):
+        if len(packet) < (index + 2 + 1):
+            raise SerializationException("Not enough bytes in packet.")
         upper = hex(packet[index])[2:].zfill(2)
         lower = hex(packet[index + 1])[2:].zfill(2)
         return int(upper + lower, 16), index + 2
@@ -425,7 +488,7 @@ class ArtPoll(ArtBase):
         return self.__enable_targeted_mode
 
     @property
-    def target_port_bounds(self):
+    def target_port_bounds(self) -> (PortAddress, PortAddress):
         return self.__target_port_bottom, self.__target_port_top
 
     def serialize(self) -> bytearray:
@@ -445,29 +508,35 @@ class ArtPoll(ArtBase):
         return packet
 
     def deserialize(self, packet: bytearray) -> int:
-        index = super().deserialize(packet)
-        self.__protocol_version, index = self._consume_int_msb(packet, index)
+        index = 0
+        try:
+            index = super().deserialize(packet)
+            self.__protocol_version, index = self._consume_int_msb(packet, index)
 
-        flags, index = self._pop(packet, index)
-        self.__enable_targeted_mode = bool(flags >> 5 & 1)
-        self.__enable_vlc_transmission = bool(flags >> 4 & 1)
-        self.__diag_mode = DiagnosticsMode(bool(flags >> 3 & 1))
-        self.__enable_diagnostics = bool(flags >> 2 & 1)
-        self.__notify_on_change = bool(flags >> 1 & 1)
+            flags, index = self._pop(packet, index)
+            self.__enable_targeted_mode = bool(flags >> 5 & 1)
+            self.__enable_vlc_transmission = bool(flags >> 4 & 1)
+            self.__diag_mode = DiagnosticsMode(bool(flags >> 3 & 1))
+            self.__enable_diagnostics = bool(flags >> 2 & 1)
+            self.__notify_on_change = bool(flags >> 1 & 1)
 
-        self.__diag_priority = DiagnosticsPriority(packet[index])
-        index += 1
+            self.__diag_priority = DiagnosticsPriority(packet[index])
+            index += 1
 
-        self.__target_port_top.port_address, index = self._consume_int_msb(packet, index)
-        self.__target_port_bottom.port_address, index = self._consume_int_msb(packet, index)
+            self.__target_port_top.port_address, index = self._consume_int_msb(packet, index)
+            self.__target_port_bottom.port_address, index = self._consume_int_msb(packet, index)
+        except SerializationException as e:
+            print(e)
+
         return index
 
 
 class ArtPollReply(ArtBase):
     def __init__(self,
-                 source_ip: bytearray = bytearray([0] * 4),
+                 source_ip: bytes = bytes([0x00] * 4),
                  firmware_version: int = 14,
-                 net__sub_net: PortAddress = PortAddress(0, 0),
+                 net_switch: int = 0,
+                 sub_switch: int = 0,
                  oem: int = 0,
                  indicator_state: IndicatorState = IndicatorState.UNKNOWN,
                  port_address_programming_authority: PortAddressProgrammingAuthority = PortAddressProgrammingAuthority.UNKNOWN,
@@ -482,13 +551,13 @@ class ArtPollReply(ArtBase):
                  sw_macro_bitmap: int = 0,
                  sw_remote_bitmap: int = 0,
                  style: StyleCode = StyleCode.ST_CONTROLLER,
-                 mac_address: bytearray = bytearray([0] * 6),
-                 bind_ip: bytearray = bytearray([0] * 4),
-                 bind_index: int = 0,
+                 mac_address: bytes = bytes([0] * 6),
+                 bind_ip: bytes = bytes([0] * 4),
+                 bind_index: int = 1,
                  supports_web_browser_configuration: bool = False,
                  dhcp_configured: bool = False,
                  dhcp_capable: bool = False,
-                 supports_15_bit_port_address: bool = False,
+                 supports_15_bit_port_address: bool = True,
                  supports_switching_to_sacn: bool = False,
                  squawking: bool = False,
                  supports_switching_of_output_style: bool = False,
@@ -503,7 +572,8 @@ class ArtPollReply(ArtBase):
         self.source_ip = source_ip
         self.port = PORT
         self.firmware_version = firmware_version
-        self.net__sub_net = net__sub_net
+        self.net_switch = net_switch
+        self.sub_switch = sub_switch
         self.oem = oem
         self.indicator_state = indicator_state
         self.port_address_programming_authority = port_address_programming_authority
@@ -515,7 +585,7 @@ class ArtPollReply(ArtBase):
         self.node_report = node_report
 
         assert len(ports) <= 4
-        self.ports = [Port()] * (4 - len(ports))
+        self.ports = ports + [Port()] * (4 - len(ports))
 
         self.acn_priority = acn_priority
 
@@ -574,14 +644,13 @@ class ArtPollReply(ArtBase):
         package.extend(self.source_ip)
 
         port_str = hex(self.port)[2:]
-        package.extend([int(port_str[2:4]), int(port_str[0:2])])
+        package.extend([int(port_str[2:4], 16), int(port_str[0:2], 16)])
 
-        self._append_int_lsb(package, self.port)
         self._append_int_msb(package, self.firmware_version)
-        package.append(self.net__sub_net.net)
-        package.append(self.net__sub_net.sub_net)
+        package.append(self.net_switch)
+        package.append(self.sub_switch)
         self._append_int_msb(package, self.oem)
-        package.append(self.ubea)
+        package.append(self.ubea or 0x00)
 
         status1 = (self.indicator_state.value << 6) \
                   + (self.port_address_programming_authority.value << 4) \
@@ -605,7 +674,7 @@ class ArtPollReply(ArtBase):
         package.append(self.sw_macro_bitmap)
         package.append(self.sw_remote_bitmap)
         package.extend([0, 0, 0])
-        package.append(self.style.value)
+        package.append(self.style.value[0])
         package.extend(self.mac_address)
         package.extend(self.bind_ip)
         package.append(self.bind_index)
@@ -636,14 +705,13 @@ class ArtPollReply(ArtBase):
     def deserialize(self, packet: bytearray) -> int:
         index = super().deserialize(packet)
 
-        self.source_ip = packet[index:index + 4]
-        index += 4
+        self.source_ip, index = self._take(packet, 4, index)
 
         self.port, index = self._consume_hex_number_lsb(packet, index)
         self.firmware_version, index = self._consume_hex_number_msb(packet, index)
 
-        self.net__sub_net.net, index = self._pop(packet, index)
-        self.net__sub_net.sub_net, index = self._pop(packet, index)
+        self.net_switch, index = self._pop(packet, index)
+        self.sub_switch, index = self._pop(packet, index)
         self.oem, index = self._consume_hex_number_msb(packet, index)
         self.ubea, index = self._pop(packet, index)
 
@@ -661,12 +729,11 @@ class ArtPollReply(ArtBase):
 
         # TODO use number of ports
         _, index = self._consume_hex_number_msb(packet, index)
-        port_type_flags = packet[index: index + 4]
-        good_input_flags = packet[index + 4: index + 8]
-        good_output_a_flags = packet[index + 8: index + 12]
-        sw_ins = packet[index + 12: index + 16]
-        sw_outs = packet[index + 16: index + 20]
-        index += 20
+        port_type_flags, index = self._take(packet, 4, index)
+        good_input_flags, index = self._take(packet, 4, index)
+        good_output_a_flags, index = self._take(packet, 4, index)
+        sw_ins, index = self._take(packet, 4, index)
+        sw_outs, index = self._take(packet, 4, index)
 
         self.acn_priority, index = self._pop(packet, index)  # Used to be SwVideo
         self.sw_macro_bitmap, index = self._pop(packet, index)
@@ -675,13 +742,8 @@ class ArtPollReply(ArtBase):
         index += 3
 
         self.style, index = self._pop(packet, index)
-
-        self.mac_address = packet[index:index + 6]
-        index += 6
-
-        self.bind_ip = packet[index:index + 4]
-        index += 4
-
+        self.mac_address, index = self._take(packet, 6, index)
+        self.bind_ip, index = self._take(packet, 4, index)
         self.bind_index, index = self._pop(packet, index)
 
         status2, index = self._pop(packet, index)
@@ -694,8 +756,7 @@ class ArtPollReply(ArtBase):
         self.supports_switching_of_output_style = bool(status2 >> 6 & 1)
         self.supports_rdm_through_artnet = bool(status2 >> 7 & 1)
 
-        good_output_b_flags = packet[index: index + 4]
-        index += 4
+        good_output_b_flags, index = self._take(packet, 4, index)
 
         for i in range(0, 4):
             port = self.ports[i]
@@ -712,13 +773,59 @@ class ArtPollReply(ArtBase):
         self.__supports_llrp = bool(status3 >> 4 & 1)
         self.supports_switching_port_direction = bool(status3 >> 3 & 1)
 
-        self.default_resp_uid = packet[index:index + 6]
-        index += 6
+        self.default_resp_uid, index = self._take(packet, 6, index)
 
         index += 15
         return index
 
-    # udp.port eq 6454 and ip.src != 192.168.1.104
+
+class ArtIpProg(ArtBase):
+
+    def __init__(self,
+                 protocol_version: int = PROTOCOL_VERSION,
+                 command: ArtIpProgCommand = ArtIpProgCommand(),
+                 prog_ip: bytes = bytes([0x00] * 4),
+                 prog_subnet: bytes = bytes([0x00] * 4),
+                 prog_gateway: bytes = bytes([0x00] * 4)
+                 ) -> None:
+        super().__init__(OpCode.OP_POLL)
+
+        assert prog_ip.__len__() == 4
+        assert prog_subnet.__len__() == 4
+        assert prog_gateway.__len__() == 4
+
+        self.protocol_version = protocol_version
+        self.command = command
+        self.prog_ip = prog_ip
+        self.prog_subnet = prog_subnet
+        self.prog_gateway = prog_gateway
+
+    def serialize(self) -> bytearray:
+        packet = super().serialize()
+        self._append_int_msb(packet, self.protocol_version)
+        packet.extend([0x00] * 2)
+        packet.append(self.command.flags)
+        packet.append(0x00)
+        packet.extend(self.prog_ip)
+        packet.extend(self.prog_subnet)
+        packet.extend([0x00] * 2)
+        packet.extend(self.prog_gateway)
+        packet.extend([0x00] * 4)
+        return packet
+
+    def deserialize(self, packet: bytearray) -> int:
+        index = super().deserialize(packet)
+        self.protocol_version, index = self._consume_int_msb(packet, index)
+        index += 2
+        self.command.flags, index = self._pop(packet, index)
+        index += 1
+        self.prog_ip, index = self._take(packet, 4, index)
+        self.prog_subnet, index = self._take(packet, 4, index)
+        index += 2
+        self.prog_gateway, index = self._take(packet, 4, index)
+
+        index += 4
+        return index
 
 
 class SerializationException(Exception):
