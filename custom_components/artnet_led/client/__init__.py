@@ -331,6 +331,59 @@ class ArtIpProgCommand:
         self.program_port = bool(flags & 1)
 
 
+class ArtAddressCommand(Enum):
+    # @formatter:off
+    AC_NONE             = 0x00  # No action
+    AC_CANCEL_MERGE     = 0x01  # If Node is currently in merge mode, cancel merge mode upon receipt of next ArtDmx packet. See discussion of merge mode operation.
+    AC_LED_NORMAL       = 0x02  # The front panel indicators of the Node operate normally.
+    AC_LED_MUTE         = 0x03  # The front panel indicators of the Node are disabled and switched off.
+    AC_LED_LOCATE       = 0x04  # Rapid flashing of the Node’s front panel indicators. It is intended as an outlet identifier for large installations.
+    AC_RESET_RX_FLAGS   = 0x05  # Resets the Node’s Sip, Text, Test and data error flags. If an output short is being flagged, forces the test to re-run.
+    AC_ANALYSIS_ON      = 0x06  # Enable analysis and debugging mode.
+    AC_ANALYSIS_OFF     = 0x07  # Disable analysis and debugging mode.
+
+    # Failsafe configuration commands: These settings should be retained by the node during power cycling.
+    AC_FAIL_HOLD        = 0x08  # Set the node to hold last state in the event of loss of network data.
+    AC_FAIL_ZERO        = 0x09  # Set the node’s outputs to zero in the event of loss of network data.
+    AC_FAIL_FULL        = 0x0A  # Set the node’s outputs to full in the event of loss of network data.
+    AC_FAIL_SCENE       = 0x0B  # Set the node’s outputs to play the failsafescene in the event of loss of network data.
+    AC_FAIL_RECORD      = 0x0C  # Record the current output state as the failsafescene.
+
+    # Node configuration commands: Note that Ltp / Htp settings should be retained by the node during power cycling.
+    # Implementation node: Using the same enum for all 4 ports, use the lower 4 bits to determine port number
+    AC_MERGE_LTP        = 0x10  # Set DMX Port # to Merge in LTP mode.
+    AC_DIRECTION_TX     = 0x20  # Set Port# direction to Output.
+    AC_DIRECTION_RX     = 0x30  # Set Port# direction to Input.
+    AC_MERGE_HTP        = 0x50  # Set DMX Port # to Merge in HTP (default) mode.
+    AC_ART_NET_SEL      = 0x60  # Set DMX Port # to output both DMX512 and RDM packets from the Art-Net protocol (default).
+    AC_ACN_SEL          = 0x70  # Set DMX Port # to output DMX512 data from the sACN protocol and RDM data from the Art-Net protocol
+    AC_CLEAR_OP         = 0x90  # Clear DMX Output buffer for Port #
+    AC_STYLE_DELTA      = 0xA0  # Set output style to delta mode (DMX frame triggered by ArtDmx) for Port #
+    AC_STYLE_CONST      = 0xB0  # Set output style to constant mode (DMX output is continuous) for Port #
+    AC_RDM_ENABLE       = 0xC0  # Enable RDM for Port #
+    AC_RDM_DISABLE      = 0XD0  # Disable RDM for Port #
+    # @formatter:on
+
+    def apply_port_index(self, port_index: int) -> int:
+        assert 0 <= port_index <= 3
+        return self.value if self.value >= 0x10 else self.value + port_index
+
+    @staticmethod
+    def decode_with_port_index(value: int) -> (Enum, int):
+        if value >= 0x10:
+            port_index = value & 0x0F
+            value -= port_index
+        else:
+            port_index = 0
+        return ArtAddressCommand(value), port_index
+
+
+class ValueAction(Enum):
+    RESET = 0
+    IGNORE = 1
+    WRITE = 2
+
+
 class ArtBase:
     def __init__(self, opcode: OpCode) -> None:
         super().__init__()
@@ -436,7 +489,7 @@ class ArtPoll(ArtBase):
         super().__init__(OpCode.OP_POLL)
         self.__protocol_version = protocol_version
         self.__enable_vlc_transmission = enable_vlc_transmission
-        self.__notify_on_change = notify_on_change
+        self.notify_on_change = notify_on_change
 
         self.__enable_diagnostics = False
         self.__diag_priority = DiagnosticsPriority.DP_LOW
@@ -454,11 +507,6 @@ class ArtPoll(ArtBase):
         self.__diag_priority = diag_priority
         self.__diag_mode = mode
 
-    def enable_targeted_mode(self, target_port_bottom: PortAddress, target_port_top: PortAddress):
-        self.__enable_targeted_mode = True
-        self.__target_port_bottom = target_port_bottom
-        self.__target_port_top: target_port_top
-
     @property
     def protocol_verison(self):
         return self.__protocol_version
@@ -466,10 +514,6 @@ class ArtPoll(ArtBase):
     @property
     def vlc_transmission_enabled(self):
         return self.__enable_vlc_transmission
-
-    @property
-    def notify_on_change(self):
-        return self.__notify_on_change
 
     @property
     def diagnostics_enabled(self):
@@ -491,6 +535,12 @@ class ArtPoll(ArtBase):
     def target_port_bounds(self) -> (PortAddress, PortAddress):
         return self.__target_port_bottom, self.__target_port_top
 
+    @target_port_bounds.setter
+    def target_port_bounds(self, bounds: (PortAddress, PortAddress)):
+        self.__target_port_bottom = bounds[0]
+        self.__target_port_top = bounds[0]
+        self.__enable_targeted_mode = True
+
     def serialize(self) -> bytearray:
         packet = super().serialize()
         self._append_int_msb(packet, self.__protocol_version)
@@ -499,7 +549,7 @@ class ArtPoll(ArtBase):
                 + (self.__enable_vlc_transmission << 4) \
                 + (self.__diag_mode.value << 3) \
                 + (self.__enable_diagnostics << 2) \
-                + (self.__notify_on_change << 1)
+                + (self.notify_on_change << 1)
 
         packet.append(flags)
         packet.append(self.__diag_priority.value)
@@ -518,7 +568,7 @@ class ArtPoll(ArtBase):
             self.__enable_vlc_transmission = bool(flags >> 4 & 1)
             self.__diag_mode = DiagnosticsMode(bool(flags >> 3 & 1))
             self.__enable_diagnostics = bool(flags >> 2 & 1)
-            self.__notify_on_change = bool(flags >> 1 & 1)
+            self.notify_on_change = bool(flags >> 1 & 1)
 
             self.__diag_priority = DiagnosticsPriority(packet[index])
             index += 1
@@ -534,7 +584,7 @@ class ArtPoll(ArtBase):
 class ArtPollReply(ArtBase):
     def __init__(self,
                  source_ip: bytes = bytes([0x00] * 4),
-                 firmware_version: int = 14,
+                 firmware_version: int = 0,
                  net_switch: int = 0,
                  sub_switch: int = 0,
                  oem: int = 0,
@@ -543,7 +593,7 @@ class ArtPollReply(ArtBase):
                  boot_process: BootProcess = BootProcess.ROM,
                  supports_rdm: bool = False,
                  esta: int = 0,
-                 short_name: str = "Default short name",
+                 short_name: str = "PyArtNet",
                  long_name: str = "Default long name",
                  node_report: str = "",
                  ports: list[Port] = [],
@@ -580,8 +630,13 @@ class ArtPollReply(ArtBase):
         self.boot_process = boot_process
         self.supports_rdm = supports_rdm
         self.esta = esta
+
+        assert len(short_name) < 18
         self.short_name = short_name
+
+        assert len(long_name) < 64
         self.long_name = long_name
+
         self.node_report = node_report
 
         assert len(ports) <= 4
@@ -640,44 +695,44 @@ class ArtPollReply(ArtBase):
         self.__default_resp_uid = default_resp_uid
 
     def serialize(self) -> bytearray:
-        package = super().serialize()
-        package.extend(self.source_ip)
+        packet = super().serialize()
+        packet.extend(self.source_ip)
 
         port_str = hex(self.port)[2:]
-        package.extend([int(port_str[2:4], 16), int(port_str[0:2], 16)])
+        packet.extend([int(port_str[2:4], 16), int(port_str[0:2], 16)])
 
-        self._append_int_msb(package, self.firmware_version)
-        package.append(self.net_switch)
-        package.append(self.sub_switch)
-        self._append_int_msb(package, self.oem)
-        package.append(self.ubea or 0x00)
+        self._append_int_msb(packet, self.firmware_version)
+        packet.append(self.net_switch)
+        packet.append(self.sub_switch)
+        self._append_int_msb(packet, self.oem)
+        packet.append(self.ubea or 0x00)
 
         status1 = (self.indicator_state.value << 6) \
                   + (self.port_address_programming_authority.value << 4) \
                   + (self.boot_process.value << 2) \
                   + (self.supports_rdm < 1) \
                   + self.__ubea_present
-        package.append(status1)
+        packet.append(status1)
 
-        self._append_int_lsb(package, self.esta)
-        self._append_str(package, self.short_name, 18)
-        self._append_str(package, self.long_name, 64)
-        self._append_str(package, self.node_report, 64)
+        self._append_int_lsb(packet, self.esta)
+        self._append_str(packet, self.short_name, 18)
+        self._append_str(packet, self.long_name, 64)
+        self._append_str(packet, self.node_report, 64)
 
-        self._append_int_msb(package, len([p for p in self.ports if p.input or p.output]))
-        package.extend([p.port_types_flags for p in self.ports])
-        package.extend([p.good_input.flags for p in self.ports])
-        package.extend([p.good_output_a.flags for p in self.ports])
-        package.extend([p.sw_in for p in self.ports])
-        package.extend([p.sw_out for p in self.ports])
-        package.append(self.acn_priority)
-        package.append(self.sw_macro_bitmap)
-        package.append(self.sw_remote_bitmap)
-        package.extend([0, 0, 0])
-        package.append(self.style.value[0])
-        package.extend(self.mac_address)
-        package.extend(self.bind_ip)
-        package.append(self.bind_index)
+        self._append_int_msb(packet, len([p for p in self.ports if p.input or p.output]))
+        packet.extend([p.port_types_flags for p in self.ports])
+        packet.extend([p.good_input.flags for p in self.ports])
+        packet.extend([p.good_output_a.flags for p in self.ports])
+        packet.extend([p.sw_in for p in self.ports])
+        packet.extend([p.sw_out for p in self.ports])
+        packet.append(self.acn_priority)
+        packet.append(self.sw_macro_bitmap)
+        packet.append(self.sw_remote_bitmap)
+        packet.extend([0, 0, 0])
+        packet.append(self.style.value[0])
+        packet.extend(self.mac_address)
+        packet.extend(self.bind_ip)
+        packet.append(self.bind_index)
 
         status2 = self.supports_web_browser_configuration \
                   + (self.dhcp_configured << 1) \
@@ -687,95 +742,99 @@ class ArtPollReply(ArtBase):
                   + (self.squawking << 5) \
                   + (self.supports_switching_of_output_style << 6) \
                   + (self.supports_rdm_through_artnet << 7)
-        package.append(status2)
+        packet.append(status2)
 
-        package.extend(map(lambda p: p.good_output_b, self.ports))
+        packet.extend(map(lambda p: p.good_output_b, self.ports))
 
         status3 = (self.failsafe_state.value << 6) \
                   + (self.supports_failover << 5) \
                   + (self.__supports_llrp << 4) \
                   + (self.supports_switching_port_direction < 3)
-        package.append(status3)
-        package.extend(self.default_resp_uid)
+        packet.append(status3)
+        packet.extend(self.default_resp_uid)
 
-        package.extend([0x0] * 15)
+        packet.extend([0x0] * 15)
 
-        return package
+        return packet
 
     def deserialize(self, packet: bytearray) -> int:
-        index = super().deserialize(packet)
+        index = 0
+        try:
+            index = super().deserialize(packet)
 
-        self.source_ip, index = self._take(packet, 4, index)
+            self.source_ip, index = self._take(packet, 4, index)
 
-        self.port, index = self._consume_hex_number_lsb(packet, index)
-        self.firmware_version, index = self._consume_hex_number_msb(packet, index)
+            self.port, index = self._consume_hex_number_lsb(packet, index)
+            self.firmware_version, index = self._consume_hex_number_msb(packet, index)
 
-        self.net_switch, index = self._pop(packet, index)
-        self.sub_switch, index = self._pop(packet, index)
-        self.oem, index = self._consume_hex_number_msb(packet, index)
-        self.ubea, index = self._pop(packet, index)
+            self.net_switch, index = self._pop(packet, index)
+            self.sub_switch, index = self._pop(packet, index)
+            self.oem, index = self._consume_hex_number_msb(packet, index)
+            self.ubea, index = self._pop(packet, index)
 
-        status1, index = self._pop(packet, index)
-        self.indicator_state = IndicatorState(status1 >> 6 & 2)
-        self.port_address_programming_authority = PortAddressProgrammingAuthority(status1 >> 4 & 2)
-        self.boot_process = BootProcess(bool(status1 >> 2 & 1))
-        self.supports_rdm = bool(status1 >> 1 & 1)
-        self.__ubea_present = bool(status1 & 1)
+            status1, index = self._pop(packet, index)
+            self.indicator_state = IndicatorState(status1 >> 6 & 2)
+            self.port_address_programming_authority = PortAddressProgrammingAuthority(status1 >> 4 & 2)
+            self.boot_process = BootProcess(bool(status1 >> 2 & 1))
+            self.supports_rdm = bool(status1 >> 1 & 1)
+            self.__ubea_present = bool(status1 & 1)
 
-        self.esta, index = self._consume_hex_number_lsb(packet, index)
-        self.short_name, index = self._consume_str(packet, index, 18)
-        self.long_name, index = self._consume_str(packet, index, 64)
-        self.node_report, index = self._consume_str(packet, index, 64)
+            self.esta, index = self._consume_hex_number_lsb(packet, index)
+            self.short_name, index = self._consume_str(packet, index, 18)
+            self.long_name, index = self._consume_str(packet, index, 64)
+            self.node_report, index = self._consume_str(packet, index, 64)
 
-        # TODO use number of ports
-        _, index = self._consume_hex_number_msb(packet, index)
-        port_type_flags, index = self._take(packet, 4, index)
-        good_input_flags, index = self._take(packet, 4, index)
-        good_output_a_flags, index = self._take(packet, 4, index)
-        sw_ins, index = self._take(packet, 4, index)
-        sw_outs, index = self._take(packet, 4, index)
+            # TODO use number of ports
+            _, index = self._consume_hex_number_msb(packet, index)
+            port_type_flags, index = self._take(packet, 4, index)
+            good_input_flags, index = self._take(packet, 4, index)
+            good_output_a_flags, index = self._take(packet, 4, index)
+            sw_ins, index = self._take(packet, 4, index)
+            sw_outs, index = self._take(packet, 4, index)
 
-        self.acn_priority, index = self._pop(packet, index)  # Used to be SwVideo
-        self.sw_macro_bitmap, index = self._pop(packet, index)
-        self.sw_remote_bitmap, index = self._pop(packet, index)
+            self.acn_priority, index = self._pop(packet, index)  # Used to be SwVideo
+            self.sw_macro_bitmap, index = self._pop(packet, index)
+            self.sw_remote_bitmap, index = self._pop(packet, index)
 
-        index += 3
+            index += 3
 
-        self.style, index = self._pop(packet, index)
-        self.mac_address, index = self._take(packet, 6, index)
-        self.bind_ip, index = self._take(packet, 4, index)
-        self.bind_index, index = self._pop(packet, index)
+            self.style, index = self._pop(packet, index)
+            self.mac_address, index = self._take(packet, 6, index)
+            self.bind_ip, index = self._take(packet, 4, index)
+            self.bind_index, index = self._pop(packet, index)
 
-        status2, index = self._pop(packet, index)
-        self.supports_web_browser_configuration = bool(status2 & 1)
-        self.dhcp_configured = bool(status2 >> 1 & 1)
-        self.dhcp_capable = bool(status2 >> 2 & 1)
-        self.supports_15_bit_port_address = bool(status2 >> 3 & 1)
-        self.supports_switching_to_sacn = bool(status2 >> 4 & 1)
-        self.squawking = bool(status2 >> 5 & 1)
-        self.supports_switching_of_output_style = bool(status2 >> 6 & 1)
-        self.supports_rdm_through_artnet = bool(status2 >> 7 & 1)
+            status2, index = self._pop(packet, index)
+            self.supports_web_browser_configuration = bool(status2 & 1)
+            self.dhcp_configured = bool(status2 >> 1 & 1)
+            self.dhcp_capable = bool(status2 >> 2 & 1)
+            self.supports_15_bit_port_address = bool(status2 >> 3 & 1)
+            self.supports_switching_to_sacn = bool(status2 >> 4 & 1)
+            self.squawking = bool(status2 >> 5 & 1)
+            self.supports_switching_of_output_style = bool(status2 >> 6 & 1)
+            self.supports_rdm_through_artnet = bool(status2 >> 7 & 1)
 
-        good_output_b_flags, index = self._take(packet, 4, index)
+            good_output_b_flags, index = self._take(packet, 4, index)
 
-        for i in range(0, 4):
-            port = self.ports[i]
-            port.port_types_flags = port_type_flags[i]
-            port.good_input.flags = good_input_flags[i]
-            port.good_output_a.flags = good_output_a_flags[i]
-            port.sw_in = sw_ins[i]
-            port.sw_out = sw_outs[i]
-            port.good_output_b = good_output_b_flags[i]
+            for i in range(4):
+                port = self.ports[i]
+                port.port_types_flags = port_type_flags[i]
+                port.good_input.flags = good_input_flags[i]
+                port.good_output_a.flags = good_output_a_flags[i]
+                port.sw_in = sw_ins[i]
+                port.sw_out = sw_outs[i]
+                port.good_output_b = good_output_b_flags[i]
 
-        status3, index = self._pop(packet, index)
-        self.failsafe_state = FailsafeState(status3 >> 6)
-        self.supports_failover = bool(status3 >> 5 & 1)
-        self.__supports_llrp = bool(status3 >> 4 & 1)
-        self.supports_switching_port_direction = bool(status3 >> 3 & 1)
+            status3, index = self._pop(packet, index)
+            self.failsafe_state = FailsafeState(status3 >> 6)
+            self.supports_failover = bool(status3 >> 5 & 1)
+            self.__supports_llrp = bool(status3 >> 4 & 1)
+            self.supports_switching_port_direction = bool(status3 >> 3 & 1)
 
-        self.default_resp_uid, index = self._take(packet, 6, index)
+            self.default_resp_uid, index = self._take(packet, 6, index)
 
-        index += 15
+            index += 15
+        except SerializationException as e:
+            print(e)
         return index
 
 
@@ -788,7 +847,7 @@ class ArtIpProg(ArtBase):
                  prog_subnet: bytes = bytes([0x00] * 4),
                  prog_gateway: bytes = bytes([0x00] * 4)
                  ) -> None:
-        super().__init__(OpCode.OP_POLL)
+        super().__init__(OpCode.OP_IP_PROG)
 
         assert prog_ip.__len__() == 4
         assert prog_subnet.__len__() == 4
@@ -814,18 +873,243 @@ class ArtIpProg(ArtBase):
         return packet
 
     def deserialize(self, packet: bytearray) -> int:
+        index = 0
+        try:
+            index = super().deserialize(packet)
+            self.protocol_version, index = self._consume_int_msb(packet, index)
+            index += 2
+            self.command.flags, index = self._pop(packet, index)
+            index += 1
+            self.prog_ip, index = self._take(packet, 4, index)
+            self.prog_subnet, index = self._take(packet, 4, index)
+            index += 2
+            self.prog_gateway, index = self._take(packet, 4, index)
+
+            index += 4
+        except SerializationException as e:
+            print(e)
+
+        return index
+
+
+class ArtIpProgReply(ArtBase):
+
+    def __init__(self,
+                 protocol_version: int = PROTOCOL_VERSION,
+                 prog_ip: bytes = bytes([0x00] * 4),
+                 prog_subnet: bytes = bytes([0x00] * 4),
+                 prog_gateway: bytes = bytes([0x00] * 4),
+                 dhcp_enabled: bool = False
+                 ) -> None:
+        super().__init__(OpCode.OP_IP_PROG_REPLY)
+
+        assert prog_ip.__len__() == 4
+        assert prog_subnet.__len__() == 4
+        assert prog_gateway.__len__() == 4
+
+        self.protocol_version = protocol_version
+        self.prog_ip = prog_ip
+        self.prog_subnet = prog_subnet
+        self.prog_gateway = prog_gateway
+        self.dhcp_enabled = dhcp_enabled
+
+    def serialize(self) -> bytearray:
+        packet = super().serialize()
+        self._append_int_msb(packet, self.protocol_version)
+        packet.extend([0x00] * 4)
+        packet.extend(self.prog_ip)
+        packet.extend(self.prog_subnet)
+        packet.extend([0x00] * 2)
+        packet.append(self.dhcp_enabled << 6)
+        packet.append(0x00)
+        packet.extend(self.prog_gateway)
+        packet.extend([0x00] * 2)
+        return packet
+
+    def deserialize(self, packet: bytearray) -> int:
         index = super().deserialize(packet)
         self.protocol_version, index = self._consume_int_msb(packet, index)
-        index += 2
-        self.command.flags, index = self._pop(packet, index)
-        index += 1
+        index += 4
         self.prog_ip, index = self._take(packet, 4, index)
         self.prog_subnet, index = self._take(packet, 4, index)
         index += 2
+
+        status, index = self._pop(packet, index)
+        self.dhcp_enabled = bool(status >> 6 & 1)
+
+        index += 1
         self.prog_gateway, index = self._take(packet, 4, index)
 
-        index += 4
+        index += 2
         return index
+
+
+class ArtAddress(ArtBase):
+    def __init__(self,
+                 protocol_version: int = PROTOCOL_VERSION,
+                 net_switch: int = 1,
+                 net_action: ValueAction = ValueAction.IGNORE,
+                 sub_switch: int = 1,
+                 sub_action: ValueAction = ValueAction.IGNORE,
+                 bind_index: int = 1,
+                 short_name: str = "",
+                 long_name: str = "",
+                 sw_in: list[int] = [1] * 4,
+                 sw_in_actions: list[ValueAction] = [ValueAction.IGNORE] * 4,
+                 sw_out: list[int] = [1] * 4,
+                 sw_out_actions: list[ValueAction] = [ValueAction.IGNORE] * 4,
+                 acn_priority: int = 255,  # 255 means no change
+                 command: ArtAddressCommand = ArtAddressCommand.AC_NONE,
+                 command_port_index: int = 0
+                 ) -> None:
+        super().__init__(opcode=OpCode.OP_ADDRESS)
+
+        self.protocol_version = protocol_version
+        self.net_switch = net_switch
+        self.net_action = net_action
+        self.sub_switch = sub_switch
+        self.sub_action = sub_action
+        self.bind_index = bind_index
+
+        assert len(short_name) < 18
+        self.short_name = short_name
+
+        assert len(long_name) < 64
+        self.long_name = long_name
+
+        assert len(sw_in) <= 4
+        self.sw_in = sw_in + [1] * (4 - len(sw_in))
+
+        assert len(sw_in_actions) <= 4
+        self.sw_in_actions = sw_in_actions + [ValueAction.IGNORE] * (4 - len(sw_in_actions))
+
+        assert len(sw_out) <= 4
+        self.sw_out = sw_out + [1] * (4 - len(sw_out))
+
+        assert len(sw_out_actions) <= 4
+        self.sw_out_actions = sw_out_actions + [ValueAction.IGNORE] * (4 - len(sw_out_actions))
+
+        assert (0 <= acn_priority <= 200) or acn_priority == 255
+        self.acn_priority = acn_priority
+
+        self.command = command
+        self.command_port_index = command_port_index
+
+    def serialize(self) -> bytearray:
+        packet = super().serialize()
+        self._append_int_msb(packet, self.protocol_version)
+        packet.append(ArtAddress.__apply_value_action(self.net_action, self.net_switch))
+        packet.append(self.bind_index)
+        self._append_str(packet, self.short_name, 18)
+        self._append_str(packet, self.long_name, 64)
+        self.__append_sw_in_out(packet, self.sw_in, self.sw_in_actions)
+        self.__append_sw_in_out(packet, self.sw_out, self.sw_out_actions)
+        packet.append(ArtAddress.__apply_value_action(self.sub_action, self.sub_switch))
+        packet.append(self.acn_priority)
+        packet.append(self.command.apply_port_index(self.command_port_index))
+        return packet
+
+    def deserialize(self, packet: bytearray) -> int:
+        index = 0
+        try:
+            index = super().deserialize(packet)
+            self.protocol_version, index = self._consume_int_msb(packet, index)
+            self.net_switch, self.net_action, index = self.__consume_value_and_action(packet, index)
+            self.bind_index, index, self._pop(packet, index)
+            self.short_name = self._consume_str(packet, index, 18)
+            self.long_name = self._consume_str(packet, index, 64)
+            self.sw_in, self.sw_in_actions, index = self.__consume_sw_in_out(packet, index)
+            self.sw_out, self.sw_out_actions, index = self.__consume_sw_in_out(packet, index)
+            self.sub_switch, self.sub_action, index = self.__consume_value_and_action(packet, index)
+            self.acn_priority, index = self._pop(packet, index)
+
+            command_byte, index = self._pop(packet, index)
+            self.command, self.command_port_index = ArtAddressCommand.decode_with_port_index(command_byte)
+        except SerializationException as e:
+            print(e)
+
+        return index
+
+    @staticmethod
+    def __apply_value_action(action: ValueAction, value: int) -> int:
+        if action == ValueAction.RESET:
+            return 0x00
+        else:
+            return (action == ValueAction.WRITE) << 7 + value
+
+    @staticmethod
+    def __consume_value_and_action(packet: bytearray, index: int) -> (int, ValueAction, int):
+        value = packet[index]
+        if value == 0x00:
+            action = ValueAction.RESET
+        elif value >> 7 & 1:
+            action = ValueAction.WRITE
+        else:
+            action = ValueAction.IGNORE
+
+        return value, action, index + 1
+
+    @staticmethod
+    def __append_sw_in_out(packet: bytearray, sw: list[int], sw_actions: list[ValueAction]):
+        for i in range(4):
+            packet.append(ArtAddress.__apply_value_action(sw_actions[i], sw[i]))
+
+    @staticmethod
+    def __consume_sw_in_out(packet: bytearray, index: int) -> (list[int], list[ValueAction], int):
+        sw_action = list(map(lambda i: ArtAddress.__consume_value_and_action(packet, index + i), range(4)))
+        sws = list(map(lambda sw_a: sw_a[0], sw_action))
+        actions = list(map(lambda sw_a: sw_a[1], sw_action))
+        return sws, actions, index + 4
+
+
+class ArtDiagData(ArtBase):
+    def __init__(self,
+                 protocol_version: int = PROTOCOL_VERSION,
+                 diag_priority: DiagnosticsPriority = DiagnosticsPriority,
+                 logical_port: int = 0,
+                 text: str = ""
+                 ) -> None:
+        super().__init__(opcode=OpCode.OP_DIAG_DATA)
+        self.protocol_version = protocol_version
+        self.diag_priority = diag_priority
+        self.logical_port = logical_port
+
+        assert len(text) < 512
+        self.text = text
+
+    def serialize(self) -> bytearray:
+        packet = super().serialize()
+        self._append_int_msb(packet, self.protocol_version)
+        packet.append(0x00)
+        packet.append(self.diag_priority.value)
+        packet.append(self.logical_port)
+        packet.append(0x00)
+        self._append_int_msb(packet, len(self.text))
+        self._append_str(packet, self.text, len(self.text) + 1)
+        return packet
+
+    def deserialize(self, packet: bytearray) -> int:
+        index = 0
+        try:
+            index = super().deserialize(packet)
+            self.protocol_version, index = self._consume_int_msb(packet, index)
+            index += 1
+            diag_priority_byte, index = self._pop(packet, index)
+            self.diag_priority = DiagnosticsPriority(diag_priority_byte)
+            self.logical_port, index = self._pop(packet, index)
+            index += 1
+            text_length, index = self._consume_int_msb(packet, index)
+            self.text, index = self._consume_str(packet, index, text_length)
+        except SerializationException as e:
+            print(e)
+
+        return index
+
+
+class ArtTimeCode(ArtBase):
+    def __init__(self):
+        super().__init__(opcode=OpCode.OP_TIME_CODE)
+
 
 
 class SerializationException(Exception):
