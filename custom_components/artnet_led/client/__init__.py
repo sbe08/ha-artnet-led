@@ -426,30 +426,30 @@ class ArtBase:
 
     @staticmethod
     def _consume_int_lsb(packet: bytearray, index: int) -> (int, int):
-        if len(packet) < (index + 2 + 1):
-            raise SerializationException("Not enough bytes in packet.")
+        if len(packet) < (index + 2):
+            raise SerializationException(f"Not enough bytes in packet: {bytes(packet).hex()}")
         [lsb, msb] = packet[index:index + 2]
         return msb << 8 + lsb, index + 2
 
     @staticmethod
     def _consume_int_msb(packet: bytearray, index: int) -> (int, int):
-        if len(packet) < (index + 2 + 1):
-            raise SerializationException("Not enough bytes in packet.")
+        if len(packet) < (index + 2):
+            raise SerializationException(f"Not enough bytes in packet: {bytes(packet).hex()}")
         [msb, lsb] = packet[index:index + 2]
         return msb << 8 + lsb, index + 2
 
     @staticmethod
     def _consume_hex_number_lsb(packet: bytearray, index: int) -> (int, int):
-        if len(packet) < (index + 2 + 1):
-            raise SerializationException("Not enough bytes in packet.")
+        if len(packet) < (index + 2):
+            raise SerializationException(f"Not enough bytes in packet: {bytes(packet).hex()}")
         lower = hex(packet[index])[2:].zfill(2)
         upper = hex(packet[index + 1])[2:].zfill(2)
         return int(upper + lower, 16), index + 2
 
     @staticmethod
     def _consume_hex_number_msb(packet: bytearray, index: int) -> (int, int):
-        if len(packet) < (index + 2 + 1):
-            raise SerializationException("Not enough bytes in packet.")
+        if len(packet) < (index + 2):
+            raise SerializationException(f"Not enough bytes in packet: {bytes(packet).hex()}")
         upper = hex(packet[index])[2:].zfill(2)
         lower = hex(packet[index + 1])[2:].zfill(2)
         return int(upper + lower, 16), index + 2
@@ -572,7 +572,6 @@ class ArtPoll(ArtBase):
 
             self.__diag_priority = DiagnosticsPriority(packet[index])
             index += 1
-
             self.__target_port_top.port_address, index = self._consume_int_msb(packet, index)
             self.__target_port_bottom.port_address, index = self._consume_int_msb(packet, index)
         except SerializationException as e:

@@ -1,14 +1,16 @@
 import asyncio
 import uuid
+from asyncio import transports
 from dataclasses import dataclass
 from datetime import time
 from socket import socket
+from typing import Any
 
-from _socket import SO_BROADCAST, AF_INET, SOCK_DGRAM, SOL_SOCKET, SO_REUSEADDR, IPPROTO_UDP, inet_aton
+from _socket import SO_BROADCAST, AF_INET, SOCK_DGRAM, SOL_SOCKET, IPPROTO_UDP, inet_aton
 from sortedcontainers import SortedDict
 
 from custom_components.artnet_led.client import OpCode, ArtBase, ArtPoll, ArtPollReply, PortAddress, IndicatorState, \
-    PortAddressProgrammingAuthority, BootProcess, NodeReport, Port, PortType, StyleCode, FailsafeState, artnet_client
+    PortAddressProgrammingAuthority, BootProcess, NodeReport, Port, PortType, StyleCode, FailsafeState
 
 ARTNET_PORT = 0x1936
 HA_OEM = 0x2BE9
@@ -42,9 +44,11 @@ class Node:
         ))
 
 
-class ArtNetServer:
+class ArtNetServer(asyncio.DatagramProtocol):
     def __init__(self, firmware_version: int = 0, oem: int = 0, esta=0, short_name: str = "PyArtNet",
                  long_name: str = "Python ArtNet Server", is_server_dhcp_configured: bool = True):
+        super().__init__()
+
         self.firmware_version = firmware_version
         self.oem = oem
         self.esta = esta
@@ -53,7 +57,7 @@ class ArtNetServer:
         self.dhcp_configured = is_server_dhcp_configured
 
         self.own_port_addresses = SortedDict()
-        self.node_change_subscribers = set
+        self.node_change_subscribers = set()
 
         self.nodes_by_ip = {}
         self.nodes_by_port_address = {}
@@ -135,90 +139,90 @@ class ArtNetServer:
             print("Sending ArtPoll")
             with socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) as sock:
                 sock.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)
-                sock.setblocking(False)
+                # sock.setblocking(False)
                 sock.sendto(poll.serialize(), ("255.255.255.255", 0x1936))
 
-            print("Sleep 3 sec")
+            print("Sleep 2.5 - 3 sec")
             await asyncio.sleep(3)
 
-    async def start_server(self):
-        with socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) as s:
-            s.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)
-            s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+    def connection_made(self, transport: transports.DatagramTransport) -> None:
+        print("Connection made")
+        super().connection_made(transport)
 
-            s.bind(('', ARTNET_PORT))
+    def connection_lost(self, exc: Exception | None) -> None:
+        super().connection_lost(exc)
 
-            while True:
-                data, addr = s.recvfrom(1024)
+    def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
+        data = bytearray(data)
+        opcode = ArtBase.peek_opcode(data)
 
-                data = bytearray(data)
-                opcode = ArtBase.peek_opcode(data)
+        if opcode == OpCode.OP_POLL:
+            poll = ArtPoll()
+            poll.deserialize(data)
 
-                if opcode == OpCode.OP_POLL:
-                    poll = ArtPoll()
-                    poll.deserialize(data)
+            if poll.targeted_mode_enabled and not self.should_handle_ports(*poll.target_port_bounds):
+                print("Received ArtPoll, but ignoring it since none of its universes overlap with out "
+                      "universes.")
+                return
 
-                    if poll.targeted_mode_enabled and not self.should_handle_ports(*poll.target_port_bounds):
-                        print("Received ArtPoll, but ignoring it since none of its universes overlap with out "
-                              "universes.")
-                        continue
+            print("Received ArtPoll")
+            self.handle_poll(addr, poll)
 
-                    print("Received ArtPoll")
-                    await self.handle_poll(addr, poll, s)
+        elif opcode == OpCode.OP_POLL_REPLY:
+            current_time = time()
+            reply = ArtPollReply()
+            reply.deserialize(data)
 
-                elif opcode == OpCode.OP_POLL_REPLY:
-                    current_time = time()
-                    reply = ArtPollReply()
-                    reply.deserialize(data)
+            print(f"Received ArtPollReply from {reply.long_name}")
+            if reply.node_report:
+                print(f"  {reply.node_report}")
 
-                    print(f"Received ArtPollReply from {reply.long_name}")
-                    if reply.node_report:
-                        print(f"  {reply.node_report}")
+            ip_bytes = inet_aton(addr[0])
 
-                    # Maintain data structures
-                    bind_index = reply.bind_index
-                    node = self.get_node_by_ip(addr, bind_index)
-                    if not node:
-                        node = Node(addr, bind_index, current_time)
-                    else:
-                        node.last_seen = current_time
+            # Maintain data structures
+            bind_index = reply.bind_index
+            node = self.get_node_by_ip(ip_bytes, bind_index)
+            if not node:
+                node = Node(ip_bytes, bind_index, current_time)
+            else:
+                node.last_seen = current_time
 
-                    old_addresses = node.get_addresses()
+            old_addresses = node.get_addresses()
 
-                    node.net_switch = reply.net_switch
-                    node.sub_switch = reply.sub_switch
-                    node.ports = reply.ports
+            node.net_switch = reply.net_switch
+            node.sub_switch = reply.sub_switch
+            node.ports = reply.ports
 
-                    new_addresses = node.get_addresses()
+            new_addresses = node.get_addresses()
 
-                    addresses_to_remove = old_addresses - new_addresses
-                    for address_to_remove in addresses_to_remove:
-                        self.remove_node_by_port_address(address_to_remove, node)
+            addresses_to_remove = old_addresses - new_addresses
+            for address_to_remove in addresses_to_remove:
+                self.remove_node_by_port_address(address_to_remove, node)
 
-                    for new_address in new_addresses:
-                        self.get_node_by_port_address(new_address).add(node)
-
-
+            for new_address in new_addresses:
+                self.get_node_by_port_address(new_address).add(node)
 
 
-                elif opcode == OpCode.OP_SYNC:
-                    print()
-                    #                 TODO set port.good_input.data_received
 
-    async def handle_poll(self, addr, poll, s):
+
+        elif opcode == OpCode.OP_SYNC:
+            print()
+            #                 TODO set port.good_input.data_received
+
+    def handle_poll(self, addr: tuple[str | Any, int], poll: ArtPoll):
         if poll.notify_on_change:
-            self.node_change_subscribers.add(addr)
+            self.node_change_subscribers.add(inet_aton(addr[0]))
 
-        own_ip_str = s.getsockname()[0]
-        print(f"Own IP address: {own_ip_str}")
-        own_ip = inet_aton(own_ip_str)
+        # own_ip_str = s.getsockname()[0]
+        # print(f"Own IP address: {own_ip_str}")
+        # own_ip = inet_aton(own_ip_str)
 
         for (net, sub_net, ports_chunk) in self.get_grouped_ports():
             for ports in ports_chunk:
                 node_report = self.node_report.report(self.art_poll_reply_counter, self.status_message)
 
                 poll_reply = ArtPollReply(
-                    source_ip=own_ip, firmware_version=self.firmware_version, net_switch=net,
+                    source_ip=bytearray([192, 168, 1, 35]), firmware_version=self.firmware_version, net_switch=net,
                     sub_switch=sub_net, oem=self.oem, indicator_state=IndicatorState.LOCATE_IDENTIFY,
                     port_address_programming_authority=PortAddressProgrammingAuthority.PROGRAMMATIC,
                     boot_process=BootProcess.FLASH, supports_rdm=RDM_SUPPORT, esta=0,
@@ -234,6 +238,9 @@ class ArtNetServer:
                 packet = poll_reply.serialize()
 
                 print("Responding to ArtPoll")
+
+                s = socket(AF_INET, SOCK_DGRAM)
+                s.setblocking(False)
                 s.sendto(packet, (addr[0], ARTNET_PORT))
 
                 self.art_poll_reply_counter += 1
@@ -251,11 +258,19 @@ server = ArtNetServer(firmware_version=1, short_name="Test python", long_name="H
 server.add_port(PortAddress(0, 0, 0))
 server.add_port(PortAddress(0, 0, 1))
 
-loop = asyncio.new_event_loop()
-poll_task = loop.create_task(server.start_poll_loop())
-server_task = loop.create_task(server.start_server())
+# asyncio.run(server.start_server())
 
+loop = asyncio.new_event_loop()
+server_event = loop.create_datagram_endpoint(lambda: server, local_addr=('0.0.0.0', ARTNET_PORT))
+loop.set_debug(True)
+loop.run_until_complete(server_event)
+loop.run_until_complete(server.start_poll_loop())
 print("Server started")
+loop.run_forever()
+
+# poll_task = loop.create_task(server.start_poll_loop())
+# server_task = loop.create_task(server.start_server())
+
 
 # loop.run_until_complete(server_task)
-loop.run_forever()
+# loop.run_forever()
