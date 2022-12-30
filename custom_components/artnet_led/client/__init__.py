@@ -384,6 +384,13 @@ class ValueAction(Enum):
     WRITE = 2
 
 
+class TimeCodeType(Enum):
+    FILM = 0
+    EBU = 1
+    DF = 2
+    SMPTE = 3
+
+
 class ArtBase:
     def __init__(self, opcode: OpCode) -> None:
         super().__init__()
@@ -429,14 +436,14 @@ class ArtBase:
         if len(packet) < (index + 2):
             raise SerializationException(f"Not enough bytes in packet: {bytes(packet).hex()}")
         [lsb, msb] = packet[index:index + 2]
-        return msb << 8 + lsb, index + 2
+        return (msb << 8) + lsb, index + 2
 
     @staticmethod
     def _consume_int_msb(packet: bytearray, index: int) -> (int, int):
         if len(packet) < (index + 2):
             raise SerializationException(f"Not enough bytes in packet: {bytes(packet).hex()}")
         [msb, lsb] = packet[index:index + 2]
-        return msb << 8 + lsb, index + 2
+        return (msb << 8) + lsb, index + 2
 
     @staticmethod
     def _consume_hex_number_lsb(packet: bytearray, index: int) -> (int, int):
@@ -516,7 +523,7 @@ class ArtPoll(ArtBase):
         return self.__enable_vlc_transmission
 
     @property
-    def diagnostics_enabled(self):
+    def is_diagnostics_enabled(self):
         return self.__enable_diagnostics
 
     @property
@@ -591,7 +598,7 @@ class ArtPollReply(ArtBase):
                  port_address_programming_authority: PortAddressProgrammingAuthority = PortAddressProgrammingAuthority.UNKNOWN,
                  boot_process: BootProcess = BootProcess.ROM,
                  supports_rdm: bool = False,
-                 esta: int = 0,
+                 esta: int = HOME_ASSISTANT_ESTA,
                  short_name: str = "PyArtNet",
                  long_name: str = "Default long name",
                  node_report: str = "",
@@ -1106,10 +1113,70 @@ class ArtDiagData(ArtBase):
 
 
 class ArtTimeCode(ArtBase):
-    def __init__(self):
+    def __init__(self,
+                 protocol_version: int = PROTOCOL_VERSION,
+                 frames: int = 0,
+                 seconds: int = 0,
+                 minutes: int = 0,
+                 hours: int = 0,
+                 type: TimeCodeType = TimeCodeType.FILM
+                 ) -> None:
         super().__init__(opcode=OpCode.OP_TIME_CODE)
+        self.protocol_version = protocol_version
 
+        assert 0 <= frames <= 29
+        self.frames = frames
 
+        assert 0 <= seconds <= 59
+        self.seconds = seconds
+
+        assert 0 <= minutes <= 59
+        self.minutes = minutes
+
+        assert 0 <= hours <= 23
+        self.hours = hours
+
+        self.type = type
+
+    def serialize(self) -> bytearray:
+        packet = super().serialize()
+        self._append_int_msb(packet, self.protocol_version)
+        packet.extend([0x00] * 2)
+        packet.append(self.frames)
+        packet.append(self.seconds)
+        packet.append(self.minutes)
+        packet.append(self.hours)
+        packet.append(self.type.value)
+
+    def deserialize(self, packet: bytearray) -> int:
+        index = 0
+        try:
+            index = super().deserialize(packet)
+            self.protocol_version, index = self._consume_int_msb(packet, index)
+            index += 2
+            self.frames, index = self._pop(packet, index)
+            self.seconds, index = self._pop(packet, index)
+            self.minutes, index = self._pop(packet, index)
+            self.hours, index = self._pop(packet, index)
+
+            type_bytes, index = self._pop(packet, index)
+            self.type = TimeCodeType(type_bytes)
+        except SerializationException as e:
+            print(e)
+
+        return index
+
+class ArtCommand(ArtBase):
+    def __init__(self,
+                 protocol_version: int = PROTOCOL_VERSION,
+                 esta: int = 0xFFFF,
+                 command: str = ""
+                 ):
+        super().__init__(opcode=OpCode.OP_COMMAND)
+        self.protocol_version = protocol_version
+        self.esta = esta
+
+        assert len(command) < 512
 
 class SerializationException(Exception):
 
