@@ -646,7 +646,9 @@ class ArtPollReply(ArtBase):
         self.node_report = node_report
 
         assert len(ports) <= 4
-        self.ports = ports + [Port()] * (4 - len(ports))
+        self.ports = ports
+        for i in range(4 - len(ports)):
+            self.ports.append(Port())
 
         self.acn_priority = acn_priority
 
@@ -883,6 +885,9 @@ class ArtIpProg(ArtBase):
         try:
             index = super().deserialize(packet)
             self.protocol_version, index = self._consume_int_msb(packet, index)
+            if self.protocol_version != 14:
+                raise SerializationException("Protocol is not 14!")
+
             index += 2
             self.command.flags, index = self._pop(packet, index)
             index += 1
@@ -933,20 +938,28 @@ class ArtIpProgReply(ArtBase):
         return packet
 
     def deserialize(self, packet: bytearray) -> int:
-        index = super().deserialize(packet)
-        self.protocol_version, index = self._consume_int_msb(packet, index)
-        index += 4
-        self.prog_ip, index = self._take(packet, 4, index)
-        self.prog_subnet, index = self._take(packet, 4, index)
-        index += 2
+        index = 0
+        try:
+            index = super().deserialize(packet)
+            self.protocol_version, index = self._consume_int_msb(packet, index)
+            if self.protocol_version != 14:
+                raise SerializationException("Protocol is not 14!")
 
-        status, index = self._pop(packet, index)
-        self.dhcp_enabled = bool(status >> 6 & 1)
+            index += 4
+            self.prog_ip, index = self._take(packet, 4, index)
+            self.prog_subnet, index = self._take(packet, 4, index)
+            index += 2
 
-        index += 1
-        self.prog_gateway, index = self._take(packet, 4, index)
+            status, index = self._pop(packet, index)
+            self.dhcp_enabled = bool(status >> 6 & 1)
 
-        index += 2
+            index += 1
+            self.prog_gateway, index = self._take(packet, 4, index)
+
+            index += 2
+        except SerializationException as e:
+            print(e)
+
         return index
 
 
@@ -1020,6 +1033,9 @@ class ArtAddress(ArtBase):
         try:
             index = super().deserialize(packet)
             self.protocol_version, index = self._consume_int_msb(packet, index)
+            if self.protocol_version != 14:
+                raise SerializationException("Protocol is not 14!")
+
             self.net_switch, self.net_action, index = self.__consume_value_and_action(packet, index)
             self.bind_index, index, self._pop(packet, index)
             self.short_name = self._consume_str(packet, index, 18)
@@ -1099,13 +1115,15 @@ class ArtDiagData(ArtBase):
         try:
             index = super().deserialize(packet)
             self.protocol_version, index = self._consume_int_msb(packet, index)
+            if self.protocol_version != 14:
+                raise SerializationException("Protocol is not 14!")
             index += 1
             diag_priority_byte, index = self._pop(packet, index)
             self.diag_priority = DiagnosticsPriority(diag_priority_byte)
             self.logical_port, index = self._pop(packet, index)
             index += 1
             text_length, index = self._consume_int_msb(packet, index)
-            self.text, index = self._consume_str(packet, index, text_length)
+            self.text, index = self._consume_str(packet, index, text_length + 1)
         except SerializationException as e:
             print(e)
 
@@ -1153,6 +1171,8 @@ class ArtTimeCode(ArtBase):
         try:
             index = super().deserialize(packet)
             self.protocol_version, index = self._consume_int_msb(packet, index)
+            if self.protocol_version != 14:
+                raise SerializationException("Protocol is not 14!")
             index += 2
             self.frames, index = self._pop(packet, index)
             self.seconds, index = self._pop(packet, index)
@@ -1166,6 +1186,7 @@ class ArtTimeCode(ArtBase):
 
         return index
 
+
 class ArtCommand(ArtBase):
     def __init__(self,
                  protocol_version: int = PROTOCOL_VERSION,
@@ -1177,6 +1198,82 @@ class ArtCommand(ArtBase):
         self.esta = esta
 
         assert len(command) < 512
+        self.command = command
+
+    def serialize(self) -> bytearray:
+        packet = super().serialize()
+        self._append_int_msb(packet, self.protocol_version)
+        self._append_int_msb(packet, self.esta)
+        self._append_str(packet, self.command, 512)
+        return packet
+
+    def deserialize(self, packet: bytearray) -> int:
+        index = 0
+        try:
+            index = super().deserialize(packet)
+            self.protocol_version, index = self._consume_int_msb(packet, index)
+            if self.protocol_version != 14:
+                raise SerializationException("Protocol is not 14!")
+
+            self.esta, index = self._consume_int_msb(packet, index)
+            self.command, index = self._consume_str(packet, index, 512)
+
+        except SerializationException as e:
+            print(e)
+
+        return index
+
+
+class ArtTrigger(ArtBase):
+    def __init__(self,
+                 protocol_version: int = PROTOCOL_VERSION,
+                 oem: int = 0xFFFF,
+                 key: int = 0,
+                 sub_key: int = 0,
+                 payload: bytearray = [0x00] * 512
+                 ):
+        super().__init__(opcode=OpCode.OP_TRIGGER)
+        self.protocol_version = protocol_version
+        self.oem = oem
+        self.key = key
+        self.sub_key = sub_key
+
+        assert len(payload) == 512
+        self.payload = payload
+
+    def serialize(self) -> bytearray:
+        packet = super().serialize()
+        self._append_int_msb(packet, self.protocol_version)
+        packet.extend([0x00] * 2)
+        self._append_int_msb(packet, self.oem)
+        packet.append(self.key)
+        packet.append(self.sub_key)
+        packet.extend(self.payload)
+        return packet
+
+    def deserialize(self, packet: bytearray) -> int:
+        index = 0
+        try:
+            index = super().deserialize(packet)
+            self.protocol_version, index = self._consume_int_msb(packet, index)
+            index += 2
+            self.oem, index = self._consume_hex_number_msb(packet, index)
+            if self.protocol_version != 14:
+                raise SerializationException("Protocol is not 14!")
+
+            self.key, index = self._pop(packet, index)
+            self.sub_key, index = self._pop(packet, index)
+
+            if self.oem == 0xFFFF and self.key > 3:
+                print(f"Warning: Trigger key range undefined for OEM '{self.oem}', key '{self.key}'")
+
+            self.payload, index = self._take(packet, index, 512)
+
+        except SerializationException as e:
+            print(e)
+
+        return index
+
 
 class SerializationException(Exception):
 

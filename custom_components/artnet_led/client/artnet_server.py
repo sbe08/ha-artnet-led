@@ -4,7 +4,6 @@ from asyncio import transports
 from dataclasses import dataclass
 from datetime import time
 from socket import socket
-from time import sleep
 from typing import Any
 
 from _socket import SO_BROADCAST, AF_INET, SOCK_DGRAM, SOL_SOCKET, IPPROTO_UDP, inet_aton
@@ -12,7 +11,7 @@ from sortedcontainers import SortedDict
 
 from custom_components.artnet_led.client import OpCode, ArtBase, ArtPoll, ArtPollReply, PortAddress, IndicatorState, \
     PortAddressProgrammingAuthority, BootProcess, NodeReport, Port, PortType, StyleCode, FailsafeState, DiagnosticsMode, \
-    DiagnosticsPriority, ArtIpProg, ArtIpProgReply, ArtAddress, ArtDiagData, ArtTimeCode
+    DiagnosticsPriority, ArtIpProg, ArtIpProgReply, ArtDiagData, ArtTimeCode, ArtCommand, ArtTrigger
 
 ARTNET_PORT = 0x1936
 HA_OEM = 0x2BE9
@@ -45,6 +44,9 @@ class Node:
             )
         ))
 
+    def __hash__(self) -> int:
+        return hash((self.addr, self.bind_index))
+
 
 class ArtNetServer(asyncio.DatagramProtocol):
     def __init__(self, firmware_version: int = 0, oem: int = 0, esta=0, short_name: str = "PyArtNet",
@@ -68,11 +70,12 @@ class ArtNetServer(asyncio.DatagramProtocol):
         self.nodes_by_ip = {}
         self.nodes_by_port_address = {}
 
-        # Spec calls this ArtPollResponse, but since that isn't defined, we'll use it to count ArtPollReply
         self.indicator_state = IndicatorState.LOCATE_IDENTIFY
         self.node_report = NodeReport.RC_POWER_OK
         self.status_message = "Starting ArtNet server..."
         self.art_poll_reply_counter = 0
+        self.swout_text = "Output"
+        self.swin_text = "Input"
 
         self.mac = uuid.getnode().to_bytes(6, "big")
 
@@ -95,7 +98,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
         # return self.nodes_by_ip[addr, bind_index]
 
     def get_node_by_port_address(self, port_address: PortAddress) -> set[Node]:
-        return self.nodes_by_port_address[port_address] or set()
+        return self.nodes_by_port_address.get(port_address, set())
 
     def remove_node_by_ip(self, addr: bytes, bind_index: int = 1):
         del self.nodes_by_ip[addr, bind_index]
@@ -223,9 +226,35 @@ class ArtNetServer(asyncio.DatagramProtocol):
             timecode.deserialize(data)
 
             print(f"Received Time Code from {addr[0]}:\n"
-                  f"  Current time/frame : {timecode.hours}:{timecode.minutes}:{timecode.seconds}.{timecode.frames}"
+                  f"  Current time/frame : {timecode.hours}:{timecode.minutes}:{timecode.seconds}.{timecode.frames}\n"
                   f"  Type               : {timecode.type}")
 
+        elif opcode == OpCode.OP_COMMAND:
+            command = ArtCommand()
+            command.deserialize(data)
+
+            print(f"Received command from {addr[0]}\n"
+                  f"  ESTA    : {command.esta}\n"
+                  f"  Command : {command.command}")
+            self.handle_command(command)
+
+        elif opcode == OpCode.OP_TRIGGER:
+            trigger = ArtTrigger()
+            trigger.deserialize(data)
+
+            print(f"Received trigger from {addr[0]}\n"
+                  f"  OEM    : {trigger.oem}\n"
+                  f"  Key    : {trigger.key}\n"
+                  f"  Subkey : {trigger.sub_key}")
+            self.handle_trigger(trigger)
+
+    def should_handle_ports(self, lower_port: PortAddress, upper_port: PortAddress) -> bool:
+        if not self.own_port_addresses:
+            return False
+
+        lowest_port_listener, upper_port_listener = self.get_port_bounds()
+
+        return not (lower_port > upper_port_listener or upper_port < lowest_port_listener)
 
     def handle_poll_reply(self, addr, reply):
         if reply.node_report:
@@ -303,15 +332,29 @@ class ArtNetServer(asyncio.DatagramProtocol):
                 sock.setblocking(False)
                 sock.sendto(packet, (addr[0], ARTNET_PORT))
 
+    def handle_command(self, command):
+        if command.esta == 0xFFFF:
+            commands = command.command.split("&")
+            for c in commands:
+                c = c.strip(' ')
+                if c:
+                    key, value = c.split('=')
+                    key = key.lower()
+                    if key == 'SwoutText'.lower():
+                        self.swout_text = value
+                        print(f"Set Sw out text to: {value}")
+                    elif key == 'SwinText'.lower():
+                        self.swin_text = value
+                        print(f"Set Sw in text to: {value}")
+        # TODO check if it would be cool to add HA specific commands?
 
-
-    def should_handle_ports(self, lower_port: PortAddress, upper_port: PortAddress) -> bool:
-        if not self.own_port_addresses:
-            return False
-
-        lowest_port_listener, upper_port_listener = self.get_port_bounds()
-
-        return not (lower_port > upper_port_listener or upper_port < lowest_port_listener)
+    def handle_trigger(self, trigger):
+        # TODO possible integrations here
+        #  0: ASCII inputs into HA?
+        #  1: Define and activate Macro's
+        #  2: Key press inputs into HA?
+        #  3: Scenes!
+        pass
 
 
 server = ArtNetServer(firmware_version=1, short_name="Test python", long_name="Hello I am testing ArtNet server",
@@ -319,10 +362,9 @@ server = ArtNetServer(firmware_version=1, short_name="Test python", long_name="H
 server.add_port(PortAddress(0, 0, 0))
 server.add_port(PortAddress(0, 0, 1))
 
-
 loop = server.start_server()
 
-server.send_artnet(ArtIpProg(), "192.168.1.15")
-
+server.send_artnet(ArtCommand(command="SwoutText=Playback& SwinText=Record&"), "192.168.1.35")
+server.send_artnet(ArtTrigger(key=1, sub_key=ord('F')), "192.168.1.35")
 
 loop.run_forever()
