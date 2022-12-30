@@ -46,7 +46,8 @@ class Node:
 
 class ArtNetServer(asyncio.DatagramProtocol):
     def __init__(self, firmware_version: int = 0, oem: int = 0, esta=0, short_name: str = "PyArtNet",
-                 long_name: str = "Python ArtNet Server", is_server_dhcp_configured: bool = True):
+                 long_name: str = "Python ArtNet Server", is_server_dhcp_configured: bool = True,
+                 polling: bool = True):
         super().__init__()
 
         self.firmware_version = firmware_version
@@ -55,6 +56,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
         self.short_name = short_name
         self.long_name = long_name
         self.dhcp_configured = is_server_dhcp_configured
+        self._polling = polling
 
         self.own_port_addresses = SortedDict()
         self.node_change_subscribers = set()
@@ -129,6 +131,16 @@ class ArtNetServer(asyncio.DatagramProtocol):
             ]
 
         return grouped_list
+
+    def start_server(self):
+        loop = asyncio.new_event_loop()
+        server_event = loop.create_datagram_endpoint(lambda: self, local_addr=('0.0.0.0', ARTNET_PORT))
+        loop.set_debug(True)
+        loop.run_until_complete(server_event)
+        if self._polling:
+            loop.create_task(server.start_poll_loop())
+        print("Server started")
+        return loop
 
     async def start_poll_loop(self):
         while True:
@@ -258,19 +270,6 @@ server = ArtNetServer(firmware_version=1, short_name="Test python", long_name="H
 server.add_port(PortAddress(0, 0, 0))
 server.add_port(PortAddress(0, 0, 1))
 
-# asyncio.run(server.start_server())
 
-loop = asyncio.new_event_loop()
-server_event = loop.create_datagram_endpoint(lambda: server, local_addr=('0.0.0.0', ARTNET_PORT))
-loop.set_debug(True)
-loop.run_until_complete(server_event)
-loop.run_until_complete(server.start_poll_loop())
-print("Server started")
+loop = server.start_server()
 loop.run_forever()
-
-# poll_task = loop.create_task(server.start_poll_loop())
-# server_task = loop.create_task(server.start_server())
-
-
-# loop.run_until_complete(server_task)
-# loop.run_forever()
