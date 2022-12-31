@@ -14,7 +14,7 @@ class OpCode(Enum):
     OP_POLL_REPLY           = 0x2100
     OP_DIAG_DATA            = 0x2300
     OP_COMMAND              = 0x2400
-    OP_OUTOUT               = 0x5000
+    OP_OUTPUT_DMX           = 0x5000
     OP_NZS                  = 0x5100
     OP_SYNC                 = 0x5200
     OP_ADDRESS              = 0x6000
@@ -138,7 +138,7 @@ class PortAddress:
 
     @property
     def port_address(self):
-        return (self.net << 13) + (self.sub_net << 9) + self.universe
+        return (self.net << 13) | (self.sub_net << 9) | self.universe
 
     @port_address.setter
     def port_address(self, port_address):
@@ -436,14 +436,14 @@ class ArtBase:
         if len(packet) < (index + 2):
             raise SerializationException(f"Not enough bytes in packet: {bytes(packet).hex()}")
         [lsb, msb] = packet[index:index + 2]
-        return (msb << 8) + lsb, index + 2
+        return (msb << 8) | lsb, index + 2
 
     @staticmethod
     def _consume_int_msb(packet: bytearray, index: int) -> (int, int):
         if len(packet) < (index + 2):
             raise SerializationException(f"Not enough bytes in packet: {bytes(packet).hex()}")
         [msb, lsb] = packet[index:index + 2]
-        return (msb << 8) + lsb, index + 2
+        return (msb << 8) | lsb, index + 2
 
     @staticmethod
     def _consume_hex_number_lsb(packet: bytearray, index: int) -> (int, int):
@@ -1057,7 +1057,7 @@ class ArtAddress(ArtBase):
         if action == ValueAction.RESET:
             return 0x00
         else:
-            return (action == ValueAction.WRITE) << 7 + value
+            return (action == ValueAction.WRITE) << 7 | value
 
     @staticmethod
     def __consume_value_and_action(packet: bytearray, index: int) -> (int, ValueAction, int):
@@ -1269,6 +1269,64 @@ class ArtTrigger(ArtBase):
 
             self.payload, index = self._take(packet, index, 512)
 
+        except SerializationException as e:
+            print(e)
+
+        return index
+
+
+class ArtDmx(ArtBase):
+
+    def __init__(self,
+                 protocol_version: int = PROTOCOL_VERSION,
+                 sequence_number: int = 0,
+                 physical: int =  0,
+                 port: PortAddress = PortAddress(0, 0, 0),
+                 data: bytearray = [0x00] * 2
+                 ) -> None:
+        super().__init__(opcode=OpCode.OP_OUTPUT_DMX),
+
+        self.protocol_version = protocol_version
+
+        assert 0 <= sequence_number <= 0xFF
+        self.sequence_number = sequence_number
+
+        assert 0 <= physical <= 3
+        self.physical = physical
+
+        self.port = port
+
+        assert len(data) <= 512
+        self.data = data
+
+    def serialize(self) -> bytearray:
+        packet = super().serialize()
+        self._append_int_msb(packet, self.protocol_version)
+        packet.append(self.sequence_number)
+        packet.append(self.physical)
+
+        port_address = self.port.port_address
+        packet.append(port_address & 0x0F)
+        packet.append(port_address >> 8 & 0x0F)
+
+        self._append_int_msb(packet, len(self.data))
+        packet.extend(self.data)
+        return packet
+
+    def deserialize(self, packet: bytearray) -> int:
+        index = 0
+        try:
+            index = super().deserialize(packet)
+            self.protocol_version, index = self._consume_int_msb(packet, index)
+            self.sequence_number, index = self._pop(packet, index)
+            self.physical, index = self._pop(packet, index)
+
+            sub_uni, index = self._pop(packet, index)
+            net, index = self._pop(packet, index)
+            self.port.port_address = net << 8 | sub_uni
+
+            data_length, index = self._consume_int_msb(packet, index)
+            self.data, index = self._take(packet, data_length, index)
         except SerializationException as e:
             print(e)
 

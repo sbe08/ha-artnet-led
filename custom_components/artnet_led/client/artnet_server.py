@@ -4,14 +4,15 @@ from asyncio import transports
 from dataclasses import dataclass
 from datetime import time
 from socket import socket
+from time import sleep
 from typing import Any
 
-from _socket import SO_BROADCAST, AF_INET, SOCK_DGRAM, SOL_SOCKET, IPPROTO_UDP, inet_aton
+from _socket import SO_BROADCAST, AF_INET, SOCK_DGRAM, SOL_SOCKET, IPPROTO_UDP, inet_aton, inet_ntoa
 from sortedcontainers import SortedDict
 
 from custom_components.artnet_led.client import OpCode, ArtBase, ArtPoll, ArtPollReply, PortAddress, IndicatorState, \
     PortAddressProgrammingAuthority, BootProcess, NodeReport, Port, PortType, StyleCode, FailsafeState, DiagnosticsMode, \
-    DiagnosticsPriority, ArtIpProg, ArtIpProgReply, ArtDiagData, ArtTimeCode, ArtCommand, ArtTrigger
+    DiagnosticsPriority, ArtIpProg, ArtIpProgReply, ArtDiagData, ArtTimeCode, ArtCommand, ArtTrigger, ArtDmx
 
 ARTNET_PORT = 0x1936
 HA_OEM = 0x2BE9
@@ -39,7 +40,7 @@ class Node:
         return set(map(
             lambda port: PortAddress(self.net_switch, self.sub_switch, port.sw_in),
             filter(
-                lambda port: port.input,
+                lambda port: port.output,
                 self.ports
             )
         ))
@@ -51,10 +52,10 @@ class Node:
 class ArtNetServer(asyncio.DatagramProtocol):
     def __init__(self, firmware_version: int = 0, oem: int = 0, esta=0, short_name: str = "PyArtNet",
                  long_name: str = "Python ArtNet Server", is_server_dhcp_configured: bool = True,
-                 polling: bool = True):
+                 polling: bool = True, sequencing: bool = True):
         super().__init__()
 
-        self.own_ip = inet_aton("192.168.1.35")
+        self.own_ip = inet_aton("192.168.1.35")  # TODO
 
         self.firmware_version = firmware_version
         self.oem = oem
@@ -63,6 +64,8 @@ class ArtNetServer(asyncio.DatagramProtocol):
         self.long_name = long_name
         self.dhcp_configured = is_server_dhcp_configured
         self._polling = polling
+        self._sequencing = sequencing
+        self.sequence_number = 1 if sequencing else 0
 
         self.own_port_addresses = SortedDict()
         self.node_change_subscribers = set()
@@ -97,8 +100,15 @@ class ArtNetServer(asyncio.DatagramProtocol):
         return self.nodes_by_ip.get((addr, bind_index), None)
         # return self.nodes_by_ip[addr, bind_index]
 
-    def get_node_by_port_address(self, port_address: PortAddress) -> set[Node]:
-        return self.nodes_by_port_address.get(port_address, set())
+    def get_node_by_port_address(self, port_address: PortAddress) -> set[Node] | None:
+        return self.nodes_by_port_address.get(port_address, None)
+
+    def add_node_by_port_address(self, port_address: PortAddress, node: Node):
+        nodes = self.nodes_by_port_address.get(port_address)
+        if nodes:
+            nodes.add(node)
+        else:
+            self.nodes_by_port_address[port_address] = {node}
 
     def remove_node_by_ip(self, addr: bytes, bind_index: int = 1):
         del self.nodes_by_ip[addr, bind_index]
@@ -168,7 +178,38 @@ class ArtNetServer(asyncio.DatagramProtocol):
     def send_artnet(self, art_packet: ArtBase, ip: str):
         with socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) as sock:
             sock.setblocking(False)
-            sock.sendto(art_packet.serialize(), (ip, 0x1936))
+            sock.sendto(art_packet.serialize(), (ip, ARTNET_PORT))
+
+    async def send_dmx(self, address: PortAddress, data: bytearray):
+        await asyncio.sleep(4)
+
+        ports = self.get_node_by_port_address(address)
+        if not ports:
+            print(f"No nodes found that listen to port address {address}.")
+            return
+
+        physical = self.own_port_addresses.keys().index(address)
+        port = self.own_port_addresses[address]
+
+        is_already_outputting = port.good_output_a.data_being_transmitted
+        if not is_already_outputting:
+            port.good_output_a.data_being_transmitted = True
+            self.update_subscribers()
+
+        art_dmx = ArtDmx(sequence_number=self.sequence_number, physical=physical, port=address, data=data)
+        packet = art_dmx.serialize()
+
+        with socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) as sock:
+            sock.setblocking(False)
+            for port in ports:
+                ip_str = inet_ntoa(port.addr)
+                print(f"Sending ArtDmx to {ip_str}")
+                sock.sendto(packet, (ip_str, ARTNET_PORT))
+
+        if self._sequencing:
+            self.sequence_number += 0x01
+            if self.sequence_number > 0xFF:
+                self.sequence_number = 0x01
 
     def connection_made(self, transport: transports.DatagramTransport) -> None:
         print("Connection made")
@@ -280,7 +321,8 @@ class ArtNetServer(asyncio.DatagramProtocol):
             self.remove_node_by_port_address(address_to_remove, node)
 
         for new_address in new_addresses:
-            self.get_node_by_port_address(new_address).add(node)
+            self.add_node_by_port_address(new_address, node)
+
             if addr[0] != self.own_ip:
                 self.status_message = "Discovered some ArtNet nodes!"
 
@@ -328,9 +370,11 @@ class ArtNetServer(asyncio.DatagramProtocol):
             diag_data = ArtDiagData(diag_priority=poll.diagnostics_priority, logical_port=0, text=self.status_message)
             packet = diag_data.serialize()
 
+            address = addr[0] if poll.diagnostics_mode == DiagnosticsMode.UNICAST else bytes([255, 255, 255, 255])
+
             with socket(AF_INET, SOCK_DGRAM) as sock:
                 sock.setblocking(False)
-                sock.sendto(packet, (addr[0], ARTNET_PORT))
+                sock.sendto(packet, (address, ARTNET_PORT))
 
     def handle_command(self, command):
         if command.esta == 0xFFFF:
@@ -366,5 +410,7 @@ loop = server.start_server()
 
 server.send_artnet(ArtCommand(command="SwoutText=Playback& SwinText=Record&"), "192.168.1.35")
 server.send_artnet(ArtTrigger(key=1, sub_key=ord('F')), "192.168.1.35")
+
+loop.create_task(server.send_dmx(PortAddress(0, 0, 0), [0xFF] * 512))
 
 loop.run_forever()
