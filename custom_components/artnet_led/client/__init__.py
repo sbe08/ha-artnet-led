@@ -792,8 +792,7 @@ class ArtPollReply(ArtBase):
             self.long_name, index = self._consume_str(packet, index, 64)
             self.node_report, index = self._consume_str(packet, index, 64)
 
-            # TODO use number of ports
-            _, index = self._consume_hex_number_msb(packet, index)
+            port_count, index = self._consume_hex_number_msb(packet, index)
             port_type_flags, index = self._take(packet, 4, index)
             good_input_flags, index = self._take(packet, 4, index)
             good_output_a_flags, index = self._take(packet, 4, index)
@@ -823,7 +822,7 @@ class ArtPollReply(ArtBase):
 
             good_output_b_flags, index = self._take(packet, 4, index)
 
-            for i in range(4):
+            for i in range(port_count):
                 port = self.ports[i]
                 port.port_types_flags = port_type_flags[i]
                 port.good_input.flags = good_input_flags[i]

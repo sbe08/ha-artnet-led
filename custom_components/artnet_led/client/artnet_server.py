@@ -121,9 +121,12 @@ class ArtNetServer(asyncio.DatagramProtocol):
         if not nodes:
             del self.nodes_by_port_address[port_address]
 
+        if node not in self.nodes_by_ip.values:
+            self.node_change_subscribers.remove(inet_ntoa(node.addr))
+
     def update_subscribers(self):
-        print()
-        # TODO
+        for subscriber in self.node_change_subscribers:
+            self.send_reply(subscriber)
 
     def get_grouped_ports(self):
         # Sort the ports by their net and subnet
@@ -179,6 +182,39 @@ class ArtNetServer(asyncio.DatagramProtocol):
         with socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) as sock:
             sock.setblocking(False)
             sock.sendto(art_packet.serialize(), (ip, ARTNET_PORT))
+
+    def send_diagnostics(self, addr: str = None, diagnostics_priority=DiagnosticsPriority.DP_MED,
+                         diagnostics_mode=DiagnosticsMode.BROADCAST):
+        diag_data = ArtDiagData(diag_priority=diagnostics_priority, logical_port=0, text=self.status_message)
+        address = addr if diagnostics_mode == DiagnosticsMode.UNICAST else bytes("255.255.255.255")
+        self.send_artnet(diag_data, address)
+
+    def send_reply(self, addr):
+        for (net, sub_net, ports_chunk) in self.get_grouped_ports():
+            bind_index = 0 if len(ports_chunk) == 1 else 1
+            for ports in ports_chunk:
+                node_report = self.node_report.report(self.art_poll_reply_counter, self.status_message)
+
+                poll_reply = ArtPollReply(
+                    source_ip=self.own_ip, firmware_version=self.firmware_version, net_switch=net,
+                    sub_switch=sub_net, oem=self.oem, indicator_state=IndicatorState.LOCATE_IDENTIFY,
+                    port_address_programming_authority=PortAddressProgrammingAuthority.PROGRAMMATIC,
+                    boot_process=BootProcess.FLASH, supports_rdm=RDM_SUPPORT, esta=0,
+                    short_name=self.short_name, long_name=self.long_name, node_report=node_report,
+                    ports=ports, style=StyleCode.ST_CONTROLLER, mac_address=self.mac,
+                    supports_web_browser_configuration=True, dhcp_configured=self.dhcp_configured,
+                    dhcp_capable=True, supports_15_bit_port_address=True,
+                    supports_switching_to_sacn=SWITCH_TO_SACN_SUPPORT, squawking=RDM_SUPPORT,
+                    supports_switching_of_output_style=ART_ADDRESS_SUPPORT, bind_index=bind_index,
+                    supports_rdm_through_artnet=RDM_SUPPORT, failsafe_state=FailsafeState.HOLD_LAST_STATE
+                )
+
+                print("Sending ArtPollReply")
+                self.send_artnet(poll_reply, addr)
+
+                self.art_poll_reply_counter += 1
+                if bind_index != 0:
+                    bind_index += 1
 
     async def send_dmx(self, address: PortAddress, data: bytearray):
         await asyncio.sleep(4)
@@ -289,6 +325,15 @@ class ArtNetServer(asyncio.DatagramProtocol):
                   f"  Subkey : {trigger.sub_key}")
             self.handle_trigger(trigger)
 
+        elif opcode == OpCode.OP_OUTPUT_DMX:
+            dmx = ArtDmx()
+            dmx.deserialize(data)
+
+            print(f"Received DMX data from {addr[0]}\n"
+                  f"  Address: {dmx.port}")
+            self.handle_dmx(dmx, addr[0])
+    #         TODO add callback to update state
+
     def should_handle_ports(self, lower_port: PortAddress, upper_port: PortAddress) -> bool:
         if not self.own_port_addresses:
             return False
@@ -336,45 +381,13 @@ class ArtNetServer(asyncio.DatagramProtocol):
             return
 
         if poll.notify_on_change:
-            self.node_change_subscribers.add(inet_aton(addr[0]))
+            self.node_change_subscribers.add(addr[0])
 
-        for (net, sub_net, ports_chunk) in self.get_grouped_ports():
-            for ports in ports_chunk:
-                node_report = self.node_report.report(self.art_poll_reply_counter, self.status_message)
-
-                poll_reply = ArtPollReply(
-                    source_ip=self.own_ip, firmware_version=self.firmware_version, net_switch=net,
-                    sub_switch=sub_net, oem=self.oem, indicator_state=IndicatorState.LOCATE_IDENTIFY,
-                    port_address_programming_authority=PortAddressProgrammingAuthority.PROGRAMMATIC,
-                    boot_process=BootProcess.FLASH, supports_rdm=RDM_SUPPORT, esta=0,
-                    short_name=self.short_name, long_name=self.long_name, node_report=node_report,
-                    ports=ports, style=StyleCode.ST_CONTROLLER, mac_address=self.mac,
-                    supports_web_browser_configuration=True, dhcp_configured=self.dhcp_configured,
-                    dhcp_capable=True, supports_15_bit_port_address=True,
-                    supports_switching_to_sacn=SWITCH_TO_SACN_SUPPORT, squawking=RDM_SUPPORT,
-                    supports_switching_of_output_style=ART_ADDRESS_SUPPORT,
-                    supports_rdm_through_artnet=RDM_SUPPORT, failsafe_state=FailsafeState.HOLD_LAST_STATE
-                )
-
-                packet = poll_reply.serialize()
-
-                print("Responding to ArtPoll")
-
-                with socket(AF_INET, SOCK_DGRAM) as sock:
-                    sock.setblocking(False)
-                    sock.sendto(packet, (addr[0], ARTNET_PORT))
-
-                self.art_poll_reply_counter += 1
+        self.send_reply(addr[0])
 
         if poll.is_diagnostics_enabled:
-            diag_data = ArtDiagData(diag_priority=poll.diagnostics_priority, logical_port=0, text=self.status_message)
-            packet = diag_data.serialize()
-
-            address = addr[0] if poll.diagnostics_mode == DiagnosticsMode.UNICAST else bytes([255, 255, 255, 255])
-
-            with socket(AF_INET, SOCK_DGRAM) as sock:
-                sock.setblocking(False)
-                sock.sendto(packet, (address, ARTNET_PORT))
+            self.send_diagnostics(addr=addr[0], diagnostics_mode=DiagnosticsMode.UNICAST,
+                                  diagnostics_priority=poll.diagnostics_priority)
 
     def handle_command(self, command):
         if command.esta == 0xFFFF:
@@ -400,6 +413,21 @@ class ArtNetServer(asyncio.DatagramProtocol):
         #  3: Scenes!
         pass
 
+    def handle_dmx(self, dmx, source_ip: str):
+        node = self.get_node_by_ip(inet_aton(source_ip))
+
+        if node.net_switch != dmx.port.net or node.sub_switch != dmx.port
+
+        for p in node.ports:
+            port = p
+            if p.sw_in == dmx.port.universe:
+                break
+        else:
+            print("The DMX frame that was received, was not previously announced through a poll reply!")
+            return
+
+        pass
+
 
 server = ArtNetServer(firmware_version=1, short_name="Test python", long_name="Hello I am testing ArtNet server",
                       polling=True)
@@ -411,6 +439,6 @@ loop = server.start_server()
 server.send_artnet(ArtCommand(command="SwoutText=Playback& SwinText=Record&"), "192.168.1.35")
 server.send_artnet(ArtTrigger(key=1, sub_key=ord('F')), "192.168.1.35")
 
-loop.create_task(server.send_dmx(PortAddress(0, 0, 0), [0xFF] * 512))
+# loop.create_task(server.send_dmx(PortAddress(0, 0, 0), [0xFF] * 512))
 
 loop.run_forever()
