@@ -38,6 +38,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 CONF_DEVICE_TRANSITION = ATTR_TRANSITION
 
 CONF_INITIAL_VALUES = "initial_values"
+CONF_SEND_PARTIAL_UNIVERSE = "send_partial_universe"
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
@@ -169,6 +170,11 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
             d.set_initial_brightness(device[CONF_DEVICE_VALUE])
 
             device_list.append(d)
+
+            send_partial_universe = universe_cfg[CONF_SEND_PARTIAL_UNIVERSE]
+            if not send_partial_universe and universe.highest_channel != 512:
+                universe.add_channel(start=512, width=1, channel_name="Full universe hack")
+
     async_add_devices(device_list)
 
     return True
@@ -856,6 +862,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Required(CONF_NODE_HOST): cv.string,
         vol.Required(CONF_NODE_UNIVERSES): {
             vol.All(int, vol.Range(min=0, max=1024)): {
+                vol.Optional(CONF_SEND_PARTIAL_UNIVERSE, default=True): cv.boolean,
                 vol.Optional(CONF_OUTPUT_CORRECTION, default=None): vol.Any(
                     None, vol.In(AVAILABLE_CORRECTIONS)
                 ),

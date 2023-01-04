@@ -70,6 +70,7 @@ light:
   refresh_every: 0                      # Resend values if no fades are running every x seconds, 0 disables automatic refresh
   universes:                            # Support for multiple universes
     0:                                  # Nr of Universe (see configuration of your Art-Net Node)
+      send_partial_universe: True       # Only send the universe which contains data
       output_correction: quadratic      # optional: output correction for the whole universe, will be used as default if nothing is set for the channel
       devices:
         # Dimmer
@@ -109,6 +110,7 @@ light:
 - **max-fps** (*Optional; default=25*): frame rate for fade update (1 to 40 FPS)
 - **refresh_every** (*Optional; default=120*): Seconds to resend values if no fades are running, 0 disables.
 - **universe** (*Required*): Art-Net universe for following DMX channels.
+  - **send_partial_universe** (*Optional; default=True*): Some controllers only accept full DMX frames. Set to `False` to always send the full 512 channels to every universe. 
   - **output_correction** (*Optional; default=linear*): applied to whole universe
     - **'linear'**
     - **'quadratic'** (see Graph)
