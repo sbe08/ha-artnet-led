@@ -1,3 +1,4 @@
+import datetime
 from dataclasses import dataclass
 from enum import Enum
 
@@ -269,6 +270,8 @@ class Port:
     sw_out: int = 0
     rdm_enabled: bool = False
     output_continuous: bool = True
+
+    last_input_seen: datetime = datetime.datetime.now()
 
     @property
     def port_types_flags(self) -> int:
@@ -1280,7 +1283,7 @@ class ArtDmx(ArtBase):
                  protocol_version: int = PROTOCOL_VERSION,
                  sequence_number: int = 0,
                  physical: int =  0,
-                 port: PortAddress = PortAddress(0, 0, 0),
+                 port_address: PortAddress = PortAddress(0, 0, 0),
                  data: bytearray = [0x00] * 2
                  ) -> None:
         super().__init__(opcode=OpCode.OP_OUTPUT_DMX),
@@ -1293,7 +1296,7 @@ class ArtDmx(ArtBase):
         assert 0 <= physical <= 3
         self.physical = physical
 
-        self.port = port
+        self.port_address = port_address
 
         assert len(data) <= 512
         self.data = data
@@ -1304,7 +1307,7 @@ class ArtDmx(ArtBase):
         packet.append(self.sequence_number)
         packet.append(self.physical)
 
-        port_address = self.port.port_address
+        port_address = self.port_address.port_address
         packet.append(port_address & 0x0F)
         packet.append(port_address >> 8 & 0x0F)
 
@@ -1322,7 +1325,7 @@ class ArtDmx(ArtBase):
 
             sub_uni, index = self._pop(packet, index)
             net, index = self._pop(packet, index)
-            self.port.port_address = net << 8 | sub_uni
+            self.port_address.port_address = net << 8 | sub_uni
 
             data_length, index = self._consume_int_msb(packet, index)
             self.data, index = self._take(packet, data_length, index)
