@@ -1,26 +1,28 @@
 import asyncio
+import datetime
+import random
 import uuid
-from asyncio import transports
+from asyncio import transports, Task
 from dataclasses import dataclass
-from datetime import time
 from socket import socket
-from time import sleep
 from typing import Any
 
 from _socket import SO_BROADCAST, AF_INET, SOCK_DGRAM, SOL_SOCKET, IPPROTO_UDP, inet_aton, inet_ntoa
 from sortedcontainers import SortedDict
 
 from custom_components.artnet_led.client import OpCode, ArtBase, ArtPoll, ArtPollReply, PortAddress, IndicatorState, \
-    PortAddressProgrammingAuthority, BootProcess, NodeReport, Port, PortType, StyleCode, FailsafeState, DiagnosticsMode, \
-    DiagnosticsPriority, ArtIpProg, ArtIpProgReply, ArtDiagData, ArtTimeCode, ArtCommand, ArtTrigger, ArtDmx
+    PortAddressProgrammingAuthority, BootProcess, NodeReport, Port, PortType, StyleCode, FailsafeState, \
+    DiagnosticsMode, DiagnosticsPriority, ArtIpProgReply, ArtDiagData, ArtTimeCode, ArtCommand, ArtTrigger, ArtDmx
 
 ARTNET_PORT = 0x1936
 HA_OEM = 0x2BE9
 
-HA_ESTA = 0x0  # TODO
+HA_ESTA = 0x00  # TODO
 RDM_SUPPORT = False  # TODO
 SWITCH_TO_SACN_SUPPORT = False  # TODO
 ART_ADDRESS_SUPPORT = False  # TODO
+
+HA_PHYSICAL_PORT = 0x00
 
 
 @dataclass
@@ -28,7 +30,7 @@ class Node:
     addr: bytes = [0x00] * 4,
     bind_index: int = 0,
 
-    last_seen: time = time(),
+    last_seen: datetime.datetime = datetime.datetime.now(),
     net_switch: int = 0,
     sub_switch: int = 0
     ports: list[Port] = None
@@ -45,14 +47,24 @@ class Node:
             )
         ))
 
+    def __str__(self):
+        return f"{self.net_switch}:{self.sub_switch}:*@{inet_ntoa(self.addr)}#{self.bind_index}"
+
     def __hash__(self) -> int:
         return hash((self.addr, self.bind_index))
+
+
+@dataclass
+class OwnPort:
+    port: Port = Port()
+    data: bytearray = bytearray([0x00] * 512)
+    update_task: Task[None] = None
 
 
 class ArtNetServer(asyncio.DatagramProtocol):
     def __init__(self, firmware_version: int = 0, oem: int = 0, esta=0, short_name: str = "PyArtNet",
                  long_name: str = "Python ArtNet Server", is_server_dhcp_configured: bool = True,
-                 polling: bool = True, sequencing: bool = True):
+                 polling: bool = True, sequencing: bool = True, retransmit_time_ms: int = 900):
         super().__init__()
 
         self.own_ip = inet_aton("192.168.1.35")  # TODO
@@ -66,8 +78,9 @@ class ArtNetServer(asyncio.DatagramProtocol):
         self._polling = polling
         self._sequencing = sequencing
         self.sequence_number = 1 if sequencing else 0
+        self.retransmit_time_ms = retransmit_time_ms
 
-        self.own_port_addresses = SortedDict()
+        self.own_port_addresses = SortedDict(OwnPort)
         self.node_change_subscribers = set()
 
         self.nodes_by_ip = {}
@@ -86,7 +99,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
         port = Port(input=True, output=True, type=PortType.ART_NET,
                     sw_in=port_address.universe, sw_out=port_address.universe)
 
-        self.own_port_addresses[port_address] = port
+        self.own_port_addresses[port_address] = OwnPort(port)
         self.update_subscribers()
 
     def remove_port(self, port_address: PortAddress):
@@ -128,14 +141,14 @@ class ArtNetServer(asyncio.DatagramProtocol):
         for subscriber in self.node_change_subscribers:
             self.send_reply(subscriber)
 
-    def get_grouped_ports(self):
+    def get_grouped_ports(self) -> [(int, int, [[Port]])]:
         # Sort the ports by their net and subnet
         net_sub = set(map(lambda p: (p.net, p.sub_net), self.own_port_addresses))
         grouped_list = [
             [
                 ns[0],
                 ns[1],
-                [p.universe for p in self.own_port_addresses if (p.net, p.sub_net) == ns]
+                [p.port.universe for p in self.own_port_addresses if (p.net, p.sub_net) == ns]
             ]
             for ns in net_sub
         ]
@@ -146,7 +159,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
 
             # Put the Port as value, instead of just universe number
             gli[2] = [
-                list(map(lambda u: self.own_port_addresses[PortAddress(gli[0], gli[1], u)], chunked_universe))
+                list(map(lambda u: self.own_port_addresses[PortAddress(gli[0], gli[1], u)].port, chunked_universe))
                 for chunked_universe in chunked_universes
             ]
 
@@ -172,13 +185,29 @@ class ArtNetServer(asyncio.DatagramProtocol):
             print("Sending ArtPoll")
             with socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) as sock:
                 sock.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)
-                # sock.setblocking(False)
                 sock.sendto(poll.serialize(), ("255.255.255.255", 0x1936))
 
-            print("Sleep 2.5 - 3 sec")
-            await asyncio.sleep(3)
+            asyncio.get_event_loop().create_task(self.remove_stale_nodes())
 
-    def send_artnet(self, art_packet: ArtBase, ip: str):
+            print("Sleep 2.5 - 3 sec")
+            await asyncio.sleep(random.uniform(2.5, 3))
+
+    async def remove_stale_nodes(self):
+        await asyncio.sleep(3)
+
+        cutoff_time = datetime.datetime.now() - datetime.timedelta(seconds=3)
+
+        for (ip, node) in self.nodes_by_ip.values():
+            if node.last_seen >= cutoff_time:
+                continue
+
+            print(f"Haven't seen node {node} for a while; removing it.")
+            del self.nodes_by_ip[ip]
+            for node_address in node.get_addresses():
+                self.remove_node_by_port_address(node_address, node)
+
+    @staticmethod
+    def send_artnet(art_packet: ArtBase, ip: str):
         with socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) as sock:
             sock.setblocking(False)
             sock.sendto(art_packet.serialize(), (ip, ARTNET_PORT))
@@ -216,36 +245,52 @@ class ArtNetServer(asyncio.DatagramProtocol):
                 if bind_index != 0:
                     bind_index += 1
 
-    async def send_dmx(self, address: PortAddress, data: bytearray):
+    async def send_dmx(self, address: PortAddress, data: bytearray) -> Task[None] | None:
         await asyncio.sleep(4)
 
-        ports = self.get_node_by_port_address(address)
-        if not ports:
+        if not self.get_node_by_port_address(address):
             print(f"No nodes found that listen to port address {address}.")
             return
 
-        physical = self.own_port_addresses.keys().index(address)
-        port = self.own_port_addresses[address]
+        own_port = self.own_port_addresses[address]
+        if own_port.update_task:
+            own_port.update_task.cancel()
 
-        is_already_outputting = port.good_output_a.data_being_transmitted
+        is_already_outputting = own_port.port.good_output_a.data_being_transmitted
         if not is_already_outputting:
-            port.good_output_a.data_being_transmitted = True
+            own_port.port.good_output_a.data_being_transmitted = True
             self.update_subscribers()
 
-        art_dmx = ArtDmx(sequence_number=self.sequence_number, physical=physical, port=address, data=data)
+        task = asyncio.get_event_loop().create_task(self.start_artdmx_loop(address, data, own_port))
+        own_port.update_task = task
+        return task
+
+    async def start_artdmx_loop(self, address, data, own_port):
+        own_port.data = data
+        art_dmx = ArtDmx(sequence_number=self.sequence_number, physical=HA_PHYSICAL_PORT, port_address=address,
+                         data=own_port.data)
         packet = art_dmx.serialize()
 
-        with socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) as sock:
-            sock.setblocking(False)
-            for port in ports:
-                ip_str = inet_ntoa(port.addr)
-                print(f"Sending ArtDmx to {ip_str}")
-                sock.sendto(packet, (ip_str, ARTNET_PORT))
+        while True:
+            nodes = self.get_node_by_port_address(address)
+            if not nodes:
+                print(f"No nodes found that listen to port address {address}. Stopping sending ArtDmx refreshes...")
+                own_port.port.good_output_a.data_being_transmitted = False
+                self.update_subscribers()
+            else:
+                with socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) as sock:
+                    sock.setblocking(False)
+                    for node in nodes:
+                        ip_str = inet_ntoa(node.addr)
+                        print(f"Sending ArtDmx to {ip_str}")
+                        sock.sendto(packet, (ip_str, ARTNET_PORT))
 
-        if self._sequencing:
-            self.sequence_number += 0x01
-            if self.sequence_number > 0xFF:
-                self.sequence_number = 0x01
+            if self._sequencing:
+                self.sequence_number += 0x01
+                if self.sequence_number > 0xFF:
+                    self.sequence_number = 0x01
+                art_dmx.sequence_number = self.sequence_number
+                packet = art_dmx.serialize()
 
     def connection_made(self, transport: transports.DatagramTransport) -> None:
         print("Connection made")
@@ -287,7 +332,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
             #                 TODO set port.good_input.data_received
 
         elif opcode == OpCode.OP_ADDRESS:
-            print(f"Received Adress request from {addr[0]}, ignoring...")
+            print(f"Received Adress request from {addr[0]}, not doing anything with it...")
 
         elif opcode == OpCode.OP_DIAG_DATA:
             diag_data = ArtDiagData()
@@ -330,9 +375,8 @@ class ArtNetServer(asyncio.DatagramProtocol):
             dmx.deserialize(data)
 
             print(f"Received DMX data from {addr[0]}\n"
-                  f"  Address: {dmx.port}")
-            self.handle_dmx(dmx, addr[0])
-    #         TODO add callback to update state
+                  f"  Address: {dmx.port_address}")
+            self.handle_dmx(dmx)
 
     def should_handle_ports(self, lower_port: PortAddress, upper_port: PortAddress) -> bool:
         if not self.own_port_addresses:
@@ -343,6 +387,14 @@ class ArtNetServer(asyncio.DatagramProtocol):
         return not (lower_port > upper_port_listener or upper_port < lowest_port_listener)
 
     def handle_poll_reply(self, addr, reply):
+        if addr == self.own_ip:
+            print("Don't reply to own polls.")
+            return
+
+        # The device should wait for a random delay of up to 1s before sending the reply. This mechanism is intended
+        # to reduce packet bunching when scaling up to very large systems.
+        await asyncio.sleep(random.uniform(0, 1))
+
         if reply.node_report:
             print(f"  {reply.node_report}")
         ip_bytes = inet_aton(addr[0])
@@ -350,7 +402,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
         bind_index = reply.bind_index
         node = self.get_node_by_ip(ip_bytes, bind_index)
 
-        current_time = time()
+        current_time = datetime.datetime.now()
         if not node:
             node = Node(ip_bytes, bind_index, current_time)
         else:
@@ -389,7 +441,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
             self.send_diagnostics(addr=addr[0], diagnostics_mode=DiagnosticsMode.UNICAST,
                                   diagnostics_priority=poll.diagnostics_priority)
 
-    def handle_command(self, command):
+    def handle_command(self, command: ArtCommand):
         if command.esta == 0xFFFF:
             commands = command.command.split("&")
             for c in commands:
@@ -413,20 +465,29 @@ class ArtNetServer(asyncio.DatagramProtocol):
         #  3: Scenes!
         pass
 
-    def handle_dmx(self, dmx, source_ip: str):
-        node = self.get_node_by_ip(inet_aton(source_ip))
-
-        if node.net_switch != dmx.port.net or node.sub_switch != dmx.port
-
-        for p in node.ports:
-            port = p
-            if p.sw_in == dmx.port.universe:
-                break
-        else:
-            print("The DMX frame that was received, was not previously announced through a poll reply!")
+    def handle_dmx(self, dmx: ArtDmx):
+        own_port = self.own_port_addresses.get(dmx.port_address)
+        if not own_port:
+            print(f"Received ArtDmx for port address that we don't care about: {dmx.port_address}")
             return
 
-        pass
+        if own_port.port.good_input.data_received:
+            own_port.port.good_input.data_received = True
+            self.update_subscribers()
+
+        own_port.port.last_input_seen = datetime.datetime.now()
+        asyncio.get_event_loop().create_task(self.disable_input_flag(own_port))
+
+    async def disable_input_flag(self, own_port: OwnPort):
+        await asyncio.sleep(4)
+
+        cutoff_time = datetime.datetime.now() - datetime.timedelta(seconds=4)
+
+        if own_port.port.last_input_seen < cutoff_time:
+            own_port.port.good_input.data_received = False
+            self.update_subscribers()
+
+        #         TODO add callback to update state
 
 
 server = ArtNetServer(firmware_version=1, short_name="Test python", long_name="Hello I am testing ArtNet server",
@@ -434,11 +495,11 @@ server = ArtNetServer(firmware_version=1, short_name="Test python", long_name="H
 server.add_port(PortAddress(0, 0, 0))
 server.add_port(PortAddress(0, 0, 1))
 
-loop = server.start_server()
+loopy = server.start_server()
 
 server.send_artnet(ArtCommand(command="SwoutText=Playback& SwinText=Record&"), "192.168.1.35")
 server.send_artnet(ArtTrigger(key=1, sub_key=ord('F')), "192.168.1.35")
 
-# loop.create_task(server.send_dmx(PortAddress(0, 0, 0), [0xFF] * 512))
+# loop.create_task(server.send_dmx(PortAddress(0, 0, 0), [0xFF] * 12))
 
-loop.run_forever()
+loopy.run_forever()
