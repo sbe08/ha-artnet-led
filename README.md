@@ -145,7 +145,35 @@ light:
 
 ### channel_setup
 
-A string or list to customize the channel layout of your light. If a list is provided, fixed numeric values may be included.
+A string or list to customize the channel layout of your light.
+If a list is provided, fixed numeric values may be included.
+
+#### Examples
+
+```yaml
+channel_setup: Wrgb
+```
+_White unscaled, red, green, blue_
+
+```yaml
+channel_setup:
+  - W
+  - r
+  - g
+  - b 
+```
+_Same as above_
+
+```yaml
+channel_setup:
+  - W
+  - r
+  - 128
+  - b 
+```
+_Staticly sets the green channel on 50% brightness_
+
+
 
 #### Definition
 
@@ -164,18 +192,20 @@ A string or list to customize the channel layout of your light. If a list is pro
 - `B` = blue, unscaled
 - `w` = white, scaled for brightness
 - `W` = white, unscaled
+- [`0`, `255`] = static value between the range [0, 255] 
 
 
 #### Compatibility
 
-| Type         |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       | Default value |
-|--------------|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-------|-------|---------------|
-| binary       |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       |               |
-| dimmer       |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       |               |
-| custom_white | `d` | `c` | `C` | `h` | `H` | `t` | `T` |     |     |     |     |     |     |       |       | `ch`          |
-| rgb          | `d` |     |     |     |     |     |     | `r` | `R` | `g` | `G` | `b` | `B` | `w`\* | `W`\* | `rgb`         |
-| rgbw         | `d` |     |     |     |     |     |     | `r` | `R` | `g` | `G` | `b` | `B` | `w`   | `W`   | `rgbw`        |
-| rgbww        | `d` | `c` | `C` | `h` | `H` | `t` | `T` | `r` | `R` | `g` | `G` | `b` | `B` |       |       | `rgbch`       |
+| Type         |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       |           | Default value |
+|--------------|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-------|-------|-----------|---------------|
+| fixed        |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       | `[0,255]` | `0`           |
+| binary       |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       | `[0,255]` | `0`           |
+| dimmer       |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       | `[0,255]` | `0`           |
+| custom_white | `d` | `c` | `C` | `h` | `H` | `t` | `T` |     |     |     |     |     |     |       |       | `[0,255]` | `ch`          |
+| rgb          | `d` |     |     |     |     |     |     | `r` | `R` | `g` | `G` | `b` | `B` | `w`\* | `W`\* | `[0,255]` | `rgb`         |
+| rgbw         | `d` |     |     |     |     |     |     | `r` | `R` | `g` | `G` | `b` | `B` | `w`   | `W`   | `[0,255]` | `rgbw`        |
+| rgbww        | `d` | `c` | `C` | `h` | `H` | `t` | `T` | `r` | `R` | `g` | `G` | `b` | `B` |       |       | `[0,255]` | `rgbch`       |
 
 \* In the case of a white channel being used in an RGB light fixture, the white channel is automatically calculated.
 
