@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import functools
 import logging
 import time
-import functools
 
 import homeassistant.helpers.config_validation as cv
 import homeassistant.util.color as color_util
@@ -24,7 +24,6 @@ from homeassistant.components.light import (
     PLATFORM_SCHEMA,
     LightEntity, COLOR_MODE_ONOFF, COLOR_MODE_WHITE,
 )
-from homeassistant.util.color import color_rgb_to_rgbw
 from homeassistant.const import CONF_DEVICES, STATE_OFF, STATE_ON
 from homeassistant.const import CONF_FRIENDLY_NAME as CONF_DEVICE_FRIENDLY_NAME
 from homeassistant.const import CONF_HOST as CONF_NODE_HOST
@@ -32,8 +31,11 @@ from homeassistant.const import CONF_NAME as CONF_DEVICE_NAME
 from homeassistant.const import CONF_PORT as CONF_NODE_PORT
 from homeassistant.const import CONF_TYPE as CONF_DEVICE_TYPE
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_registry import async_get, RegistryEntry
+from homeassistant.helpers.entity_registry import async_get
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util.color import color_rgb_to_rgbw
+
+from custom_components.artnet_led.bridge.artnet_controller import ArtNetController
 
 CONF_DEVICE_TRANSITION = ATTR_TRANSITION
 
@@ -48,6 +50,7 @@ REQUIREMENTS = ["pyartnet == 0.8.3"]
 log.info(f"PyArtNet: {REQUIREMENTS[0]}")
 log.info(f"Version : 2021.07.10")
 
+CONF_NODE_CLIENT = "artnet_client"
 CONF_NODE_MAX_FPS = "max_fps"
 CONF_NODE_REFRESH = "refresh_every"
 CONF_NODE_UNIVERSES = "universes"
@@ -96,21 +99,34 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
     for line in pprint.pformat(config).splitlines():
         log.info(line)
 
-    host = config.get(CONF_NODE_HOST)
-    port = config.get(CONF_NODE_PORT)
+    client_type = config.get(CONF_NODE_CLIENT)
+    max_fps = config.get(CONF_NODE_MAX_FPS)
+    refresh_interval = config.get(CONF_NODE_REFRESH)
 
     # setup Node
-    __id = f"{host}:{port}"
-    if __id not in ARTNET_NODES:
-        __node = pyartnet.ArtNetNode(
-            host,
-            port,
-            max_fps=config[CONF_NODE_MAX_FPS],
-            refresh_every=config[CONF_NODE_REFRESH],
-        )
-        await __node.start()
-        ARTNET_NODES[id] = __node
-    node = ARTNET_NODES[id]
+    if client_type == "direct":
+        host = config.get(CONF_NODE_HOST)
+        port = config.get(CONF_NODE_PORT)
+        __id = f"{host}:{port}"
+        if __id not in ARTNET_NODES:
+            __node = pyartnet.ArtNetNode(
+                host,
+                port,
+                max_fps=max_fps,
+                refresh_every=refresh_interval,
+            )
+            ARTNET_NODES[id] = __node
+
+        node = ARTNET_NODES[id]
+
+    else:
+        if "server" not in ARTNET_NODES:
+            __node = ArtNetController(max_fps=max_fps, refresh_every=refresh_interval)
+            ARTNET_NODES["server"] = __node
+
+        node = ARTNET_NODES["server"]
+
+    await node.start()
     assert isinstance(node, pyartnet.ArtNetNode), type(node)
 
     entity_registry = async_get(hass)
@@ -924,6 +940,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Optional(CONF_NODE_REFRESH, default=120): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=9999)
         ),
+        vol.Optional(CONF_NODE_CLIENT, default="direct"): vol.Match("^(direct|server)$"),
     },
     required=True,
     extra=vol.PREVENT_EXTRA,
