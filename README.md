@@ -11,8 +11,8 @@ The DMX integration for Home Assistant allows you to send DMX values to an [Art-
 ## WIP before submitting it to HACS' default repositories
 
 - [x] Implement custom_white
-- [ ] Reimplement KiNet
-- [ ] Implement sACN (https://github.com/jnimmo/hass-dmx/pull/66)
+- [x] Reimplement KiNet
+- [x] Implement sACN (https://github.com/jnimmo/hass-dmx/pull/66)
 - [ ] Stop animation thread when not animating (https://github.com/jnimmo/hass-dmx/pull/8#issuecomment-449679960)
 
 ## WIP before submitting it to Home Assistant core integrations
@@ -68,6 +68,7 @@ light:
   host: IP                              # IP of Art-Net Node
   max_fps: 25                           # Max 40 per second
   refresh_every: 0                      # Resend values if no fades are running every x seconds, 0 disables automatic refresh
+  node_type: artnet-direct              # Which protocol to use
   universes:                            # Support for multiple universes
     0:                                  # Nr of Universe (see configuration of your Art-Net Node)
       send_partial_universe: True       # Only send the universe which contains data
@@ -109,8 +110,14 @@ light:
 - **port** (*Optional; default=6454*): Art-Net/DMX gateway port
 - **max-fps** (*Optional; default=25*): frame rate for fade update (1 to 40 FPS)
 - **refresh_every** (*Optional; default=120*): Seconds to resend values if no fades are running, 0 disables.
+- **node_type** (*Optional; default=artnet-direct*): the protocol to use
+  - **'artnet-direct'**: Directly sends DMX packets to a single node's IP.
+  - **'artnet-controller'**: Auto-discovers ArtNet nodes and other controllers, can be picked up by other controllers.
+  - **'sacn-direct'**: The E1.31 sACN protocol, directly sending to a node's IP.
+  - **'kinet'**: The KiNET, directly sending to a node's IP.
 - **universe** (*Required*): Art-Net universe for following DMX channels.
-  - **send_partial_universe** (*Optional; default=True*): Some controllers only accept full DMX frames. Set to `False` to always send the full 512 channels to every universe. 
+  - **send_partial_universe** (*Optional; default=True*): Some controllers only accept full DMX frames. Set to `False` 
+    to always send the full 512 channels to every universe.
   - **output_correction** (*Optional; default=linear*): applied to whole universe
     - **'linear'**
     - **'quadratic'** (see Graph)
@@ -139,6 +146,7 @@ light:
     - **'16bit'** (65k steps)
     - **'24bit'** (too many steps)
     - **'32bit'** (don't ask steps)
+  - **byte_order** (*Optional; default=little*): For multi-byte channels, the bytes can be little-endian or big-endian. 
   - **min_temp** (Optional; default=2700K): Only applies for types 'color_temp' and 'rgbww'
   - **max_temp** (Optional; default=6500K): Only applies for types 'color_temp' and 'rgbww'
   - **channel_setup** (Optional; see [channel_setup](#channel_setup))

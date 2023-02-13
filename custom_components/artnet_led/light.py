@@ -36,7 +36,6 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util.color import color_rgb_to_rgbw
 
 from custom_components.artnet_led.bridge.artnet_controller import ArtNetController
-from homeassistant.util.color import color_rgb_to_rgbw
 
 CONF_DEVICE_TRANSITION = ATTR_TRANSITION
 
@@ -51,7 +50,7 @@ REQUIREMENTS = ["pyartnet == 0.8.3"]
 log.info(f"PyArtNet: {REQUIREMENTS[0]}")
 log.info(f"Version : 2021.07.10")
 
-CONF_NODE_CLIENT = "artnet_client"
+CONF_NODE_TYPE = "node_type"
 CONF_NODE_MAX_FPS = "max_fps"
 CONF_NODE_REFRESH = "refresh_every"
 CONF_NODE_UNIVERSES = "universes"
@@ -78,7 +77,7 @@ CHANNEL_SIZE = {
     "32bit": 4
 }
 
-ARTNET_NODES = {}
+NODES = {}
 
 
 async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, discovery_info=None):
@@ -89,16 +88,18 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
     for line in pprint.pformat(config).splitlines():
         log.info(line)
 
-    client_type = config.get(CONF_NODE_CLIENT)
+    client_type = config.get(CONF_NODE_TYPE)
     max_fps = config.get(CONF_NODE_MAX_FPS)
     refresh_interval = config.get(CONF_NODE_REFRESH)
 
+    host = config.get(CONF_NODE_HOST)
+    port = config.get(CONF_NODE_PORT)
+
     # setup Node
-    if client_type == "direct":
-        host = config.get(CONF_NODE_HOST)
-        port = config.get(CONF_NODE_PORT)
+    node: pyartnet.base.BaseNode
+    if client_type == "artnet-direct":
         __id = f"{host}:{port}"
-        if __id not in ARTNET_NODES:
+        if __id not in NODES:
             __node = pyartnet.ArtNetNode(
                 host,
                 port,
@@ -107,19 +108,46 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
                 start_refresh_task=(refresh_interval == 0),
                 sequence_counter=True
             )
-            ARTNET_NODES[id] = __node
+            NODES[id] = __node
 
-        node = ARTNET_NODES[id]
+        node = NODES[id]
+
+    elif client_type == "artnet-controller":
+        if "server" not in NODES:
+            __node = ArtNetController(hass, max_fps=max_fps, refresh_every=refresh_interval)
+            NODES["server"] = __node
+
+        node = NODES["server"]
+    elif client_type == "sacn":
+        __id = f"{host}:{port}"
+        if __id not in NODES:
+            __node = pyartnet.SacnNode(
+                host,
+                port,
+                max_fps=max_fps,
+                refresh_every=refresh_interval,
+                start_refresh_task=(refresh_interval == 0),
+                source_name="ha-artnet-led"
+            )
+            NODES[id] = __node
+
+        node = NODES[id]
+    elif client_type == "kinet":
+        __id = f"{host}:{port}"
+        if __id not in NODES:
+            __node = pyartnet.KiNetNode(
+                host,
+                port,
+                max_fps=max_fps,
+                refresh_every=refresh_interval,
+                start_refresh_task=(refresh_interval == 0),
+            )
+            NODES[id] = __node
+
+        node = NODES[id]
 
     else:
-        if "server" not in ARTNET_NODES:
-            __node = ArtNetController(max_fps=max_fps, refresh_every=refresh_interval)
-            ARTNET_NODES["server"] = __node
-
-        node = ARTNET_NODES["server"]
-
-    await node.start()
-    assert isinstance(node, pyartnet.ArtNetNode), type(node)
+        raise NotImplementedError(f"Unknown client type '{client_type}'")
 
     entity_registry = async_get(hass)
     await entity_registry.async_load()
@@ -938,7 +966,9 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Optional(CONF_NODE_REFRESH, default=120): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=9999)
         ),
-        vol.Optional(CONF_NODE_CLIENT, default="direct"): vol.Match("^(direct|server)$"),
+        vol.Optional(CONF_NODE_TYPE, default="artnet-direct"): vol.Any(
+            None, vol.In(["artnet-direct", "artnet-controller", "sacn", "kinet"])
+        ),
     },
     required=True,
     extra=vol.PREVENT_EXTRA,
