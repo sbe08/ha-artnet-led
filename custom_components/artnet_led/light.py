@@ -36,6 +36,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util.color import color_rgb_to_rgbw
 
 from custom_components.artnet_led.bridge.artnet_controller import ArtNetController
+from homeassistant.util.color import color_rgb_to_rgbw
 
 CONF_DEVICE_TRANSITION = ATTR_TRANSITION
 
@@ -59,6 +60,7 @@ CONF_DEVICE_CHANNEL = "channel"
 CONF_DEVICE_VALUE = "value"
 CONF_OUTPUT_CORRECTION = "output_correction"
 CONF_CHANNEL_SIZE = "channel_size"
+CONF_BYTE_ORDER = "byte_order"
 
 CONF_DEVICE_MIN_TEMP = "min_temp"
 CONF_DEVICE_MAX_TEMP = "max_temp"
@@ -66,28 +68,14 @@ CONF_CHANNEL_SETUP = "channel_setup"
 
 DOMAIN = "dmx"
 
-AVAILABLE_CORRECTIONS = {
-    "linear": None,
-    "quadratic": None,
-    "cubic": None,
-    "quadruple": None,
-}
-
-
-def linear_output_correction(val: float, max_val: int = 0xFF):
-    return val
-
-
-AVAILABLE_CORRECTIONS["linear"] = linear_output_correction
-AVAILABLE_CORRECTIONS["quadratic"] = pyartnet.output_correction.quadratic
-AVAILABLE_CORRECTIONS["cubic"] = pyartnet.output_correction.cubic
-AVAILABLE_CORRECTIONS["quadruple"] = pyartnet.output_correction.quadruple
+AVAILABLE_CORRECTIONS = {"linear": pyartnet.output_correction.linear, "quadratic": pyartnet.output_correction.quadratic,
+                         "cubic": pyartnet.output_correction.cubic, "quadruple": pyartnet.output_correction.quadruple}
 
 CHANNEL_SIZE = {
-    "8bit": (1, pyartnet.DmxChannel, 1),
-    "16bit": (2, pyartnet.DmxChannel16Bit, 256),
-    "24bit": (3, pyartnet.DmxChannel24Bit, 256 * 256),
-    "32bit": (4, pyartnet.DmxChannel32Bit, 256 ** 3),
+    "8bit": 1,
+    "16bit": 2,
+    "24bit": 3,
+    "32bit": 4
 }
 
 ARTNET_NODES = {}
@@ -95,6 +83,8 @@ ARTNET_NODES = {}
 
 async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, discovery_info=None):
     import pprint
+
+    pyartnet.base.CREATE_TASK = hass.async_create_task
 
     for line in pprint.pformat(config).splitlines():
         log.info(line)
@@ -114,6 +104,8 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
                 port,
                 max_fps=max_fps,
                 refresh_every=refresh_interval,
+                start_refresh_task=(refresh_interval == 0),
+                sequence_counter=True
             )
             ARTNET_NODES[id] = __node
 
@@ -155,6 +147,8 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
             unique_id = f"{DOMAIN}:{host}/{universe_nr}/{channel}"
 
             name: str = device[CONF_DEVICE_NAME]
+            byte_size = CHANNEL_SIZE[device[CONF_CHANNEL_SIZE]]
+            byte_order = device[CONF_BYTE_ORDER]
 
             entity_id = f"light.{name.replace(' ', '_').lower()}"
 
@@ -170,12 +164,15 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
             device["unique_id"] = unique_id
             d = cls(**device)  # type: DmxBaseLight
             d.set_type(device[CONF_DEVICE_TYPE])
+
             d.set_channel(
                 universe.add_channel(
                     start=channel,
                     width=d.channel_width,
                     channel_name=d.name,
                     channel_type=d.channel_size[1],
+                    byte_size=byte_size,
+                    byte_order=byte_order,
                 )
             )
 
@@ -219,18 +216,16 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         self._vals = 0
         self._features = 0
         self._supported_color_modes = set()
-        # channel & notification callbacks
-        # noinspection PyTypeHints
-        self._channel: self._channel_size[1] = None
         self._channel_last_update = 0
         self._scale_factor = 1
         self._channel_width = 0
         self._type = None
 
-    def set_channel(self, channel):
-        """Set the channel & the callbacks"""
+        self._channel: pyartnet.base.Channel
+
+    def set_channel(self, channel: pyartnet.base.Channel):
+        """Set the channel"""
         self._channel = channel
-        self._channel.callback_value_changed = self._channel_value_change
         self._channel.callback_fade_finished = self._channel_fade_finish
 
     def set_type(self, type):
@@ -900,8 +895,11 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
                             vol.Optional(CONF_OUTPUT_CORRECTION, default=None): vol.Any(
                                 None, vol.In(AVAILABLE_CORRECTIONS)
                             ),
-                            vol.Optional(CONF_CHANNEL_SIZE, default="8bit"): vol.Any(
+                            vol.Optional(CONF_CHANNEL_SIZE, default='8bit'): vol.Any(
                                 None, vol.In(CHANNEL_SIZE)
+                            ),
+                            vol.Optional(CONF_BYTE_ORDER, default='little'): vol.Any(
+                                None, vol.In(['little', 'big'])
                             ),
                             vol.Optional(CONF_DEVICE_VALUE, default=0): vol.All(
                                 vol.Coerce(int), vol.Range(min=0, max=255)
