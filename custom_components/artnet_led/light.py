@@ -45,12 +45,6 @@ CONF_INITIAL_VALUES = "initial_values"
 CONF_SEND_PARTIAL_UNIVERSE = "send_partial_universe"
 
 log = logging.getLogger(__name__)
-log.setLevel(logging.DEBUG)
-
-REQUIREMENTS = ["pyartnet == 0.8.3"]
-
-log.info(f"PyArtNet: {REQUIREMENTS[0]}")
-log.info(f"Version : 2021.07.10")
 
 CONF_NODE_TYPE = "node_type"
 CONF_NODE_MAX_FPS = "max_fps"
@@ -88,7 +82,7 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
     pyartnet.base.CREATE_TASK = hass.async_create_task
 
     for line in pprint.pformat(config).splitlines():
-        log.info(line)
+        log.debug(line)
 
     client_type = config.get(CONF_NODE_TYPE)
     max_fps = config.get(CONF_NODE_MAX_FPS)
@@ -186,7 +180,7 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
             # If the entity has another unique ID, use that until it's migrated properly
             entity = entity_registry.async_get(entity_id)
             if entity:
-                logging.info(f"Found existing entity for name {entity_id}, using unique id {unique_id}")
+                log.info(f"Found existing entity for name {entity_id}, using unique id {unique_id}")
                 if entity.unique_id is not None and entity.unique_id not in used_unique_ids:
                     unique_id = entity.unique_id
             used_unique_ids.append(unique_id)
@@ -365,7 +359,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         """
         self._transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
 
-        logging.debug(
+        log.debug(
             "Turning off '%s' with transition  %i", self._name, self._transition
         )
         self._channel.add_fade(
@@ -903,7 +897,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Required(CONF_NODE_UNIVERSES): {
             vol.All(int, vol.Range(min=0, max=1024)): {
                 vol.Optional(CONF_SEND_PARTIAL_UNIVERSE, default=True): cv.boolean,
-                vol.Optional(CONF_OUTPUT_CORRECTION, default=None): vol.Any(
+                vol.Optional(CONF_OUTPUT_CORRECTION, default='linear'): vol.Any(
                     None, vol.In(AVAILABLE_CORRECTIONS)
                 ),
                 CONF_DEVICES: vol.All(
@@ -921,7 +915,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
                             vol.Optional(CONF_DEVICE_TRANSITION, default=0): vol.All(
                                 vol.Coerce(float), vol.Range(min=0, max=999)
                             ),
-                            vol.Optional(CONF_OUTPUT_CORRECTION, default=None): vol.Any(
+                            vol.Optional(CONF_OUTPUT_CORRECTION, default='linear'): vol.Any(
                                 None, vol.In(AVAILABLE_CORRECTIONS)
                             ),
                             vol.Optional(CONF_CHANNEL_SIZE, default='8bit'): vol.Any(
