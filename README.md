@@ -146,7 +146,7 @@ light:
     - **'16bit'** (65k steps)
     - **'24bit'** (too many steps)
     - **'32bit'** (don't ask steps)
-  - **byte_order** (*Optional; default=little*): For multi-byte channels, the bytes can be little-endian or big-endian. 
+  - **byte_order** (*Optional; default=big*): For multi-byte channels, the bytes can be little-endian or big-endian. 
   - **min_temp** (Optional; default=2700K): Only applies for types 'color_temp' and 'rgbww'
   - **max_temp** (Optional; default=6500K): Only applies for types 'color_temp' and 'rgbww'
   - **channel_setup** (Optional; see [channel_setup](#channel_setup))

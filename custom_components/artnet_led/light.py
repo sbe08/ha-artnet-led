@@ -927,7 +927,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
                             vol.Optional(CONF_CHANNEL_SIZE, default='8bit'): vol.Any(
                                 None, vol.In(CHANNEL_SIZE)
                             ),
-                            vol.Optional(CONF_BYTE_ORDER, default='little'): vol.Any(
+                            vol.Optional(CONF_BYTE_ORDER, default='big'): vol.Any(
                                 None, vol.In(['little', 'big'])
                             ),
                             vol.Optional(CONF_DEVICE_VALUE, default=0): vol.All(
