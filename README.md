@@ -113,7 +113,7 @@ light:
 - **node_type** (*Optional; default=artnet-direct*): the protocol to use
   - **'artnet-direct'**: Directly sends DMX packets to a single node's IP.
   - **'artnet-controller'**: Auto-discovers ArtNet nodes and other controllers, can be picked up by other controllers.
-  - **'sacn-direct'**: The E1.31 sACN protocol, directly sending to a node's IP.
+  - **'sacn'**: The E1.31 sACN protocol, directly sending to a node's IP.
   - **'kinet'**: The KiNET, directly sending to a node's IP.
 - **universe** (*Required*): Art-Net universe for following DMX channels.
   - **send_partial_universe** (*Optional; default=True*): Some controllers only accept full DMX frames. Set to `False` 
