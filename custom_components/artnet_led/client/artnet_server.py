@@ -10,8 +10,7 @@ from typing import Any
 
 from _socket import SO_BROADCAST, AF_INET, SOCK_DGRAM, SOL_SOCKET, IPPROTO_UDP, inet_aton, inet_ntoa
 from homeassistant.core import HomeAssistant
-from sortedcontainers import SortedDict
-from netifaces import interfaces, ifaddresses, AF_INET
+from netifaces import AF_INET
 
 from custom_components.artnet_led.client import OpCode, ArtBase, ArtPoll, ArtPollReply, PortAddress, IndicatorState, \
     PortAddressProgrammingAuthority, BootProcess, NodeReport, Port, PortType, StyleCode, FailsafeState, \
@@ -64,7 +63,8 @@ class OwnPort:
 
 
 class ArtNetServer(asyncio.DatagramProtocol):
-    def __init__(self, hass: HomeAssistant, state_update_callback, firmware_version: int = 0, oem: int = 0, esta=0, short_name: str = "PyArtNet",
+    def __init__(self, hass: HomeAssistant, state_update_callback, firmware_version: int = 0, oem: int = 0, esta=0,
+                 short_name: str = "PyArtNet",
                  long_name: str = "Python ArtNet Server", is_server_dhcp_configured: bool = True,
                  polling: bool = True, sequencing: bool = True, retransmit_time_ms: int = 900):
         super().__init__()
@@ -82,7 +82,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
         self.sequence_number = 1 if sequencing else 0
         self.retransmit_time_ms = retransmit_time_ms
 
-        self.own_port_addresses = SortedDict(OwnPort)
+        self.own_port_addresses = {}
         self.node_change_subscribers = set()
 
         self.nodes_by_ip = {}
@@ -112,11 +112,11 @@ class ArtNetServer(asyncio.DatagramProtocol):
         self.update_subscribers()
 
     def get_port_bounds(self) -> (PortAddress, PortAddress):
-        return self.own_port_addresses.peekitem(0)[0], self.own_port_addresses.peekitem(-1)[0]
+        port_addresses = self.own_port_addresses.keys()
+        return min(port_addresses), max(port_addresses)
 
     def get_node_by_ip(self, addr: bytes, bind_index: int = 1) -> Node | None:
         return self.nodes_by_ip.get((addr, bind_index), None)
-        # return self.nodes_by_ip[addr, bind_index]
 
     def get_node_by_port_address(self, port_address: PortAddress) -> set[Node] | None:
         return self.nodes_by_port_address.get(port_address, None)
@@ -312,9 +312,11 @@ class ArtNetServer(asyncio.DatagramProtocol):
         super().connection_lost(exc)
 
     def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
+        self.__hass.async_create_task(self.handle_datagram(addr, data))
+
+    async def handle_datagram(self, addr, data):
         data = bytearray(data)
         opcode = ArtBase.peek_opcode(data)
-
         if opcode == OpCode.OP_POLL:
             poll = ArtPoll()
             poll.deserialize(data)
@@ -327,7 +329,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
             reply.deserialize(data)
 
             logging.debug(f"Received ArtPollReply from {reply.long_name}")
-            self.handle_poll_reply(addr, reply)
+            await self.handle_poll_reply(addr, reply)
 
         elif opcode == OpCode.OP_IP_PROG:
             logging.debug(f"Received IP prog request from {addr[0]}, ignoring...")
@@ -337,10 +339,10 @@ class ArtNetServer(asyncio.DatagramProtocol):
             ip_prog_reply.deserialize(data)
 
             logging.debug(f"Received IP prog reply from {addr[0]}:\n"
-                  f"  IP      : {ip_prog_reply.prog_ip}\n"
-                  f"  Subnet  : {ip_prog_reply.prog_subnet}\n"
-                  f"  Gateway : {ip_prog_reply.prog_gateway}\n"
-                  f"  DHCP    : {ip_prog_reply.dhcp_enabled}")
+                          f"  IP      : {ip_prog_reply.prog_ip}\n"
+                          f"  Subnet  : {ip_prog_reply.prog_subnet}\n"
+                          f"  Gateway : {ip_prog_reply.prog_gateway}\n"
+                          f"  DHCP    : {ip_prog_reply.dhcp_enabled}")
             #                 TODO set port.good_input.data_received
 
         elif opcode == OpCode.OP_ADDRESS:
@@ -351,25 +353,25 @@ class ArtNetServer(asyncio.DatagramProtocol):
             diag_data.deserialize(data)
 
             logging.debug(f"Received Diag Data from {addr[0]}:\n"
-                  f"  Priority     : {diag_data.diag_priority}\n"
-                  f"  Logical port : {diag_data.logical_port}\n"
-                  f"  Text         : {diag_data.text}")
+                          f"  Priority     : {diag_data.diag_priority}\n"
+                          f"  Logical port : {diag_data.logical_port}\n"
+                          f"  Text         : {diag_data.text}")
 
         elif opcode == OpCode.OP_TIME_CODE:
             timecode = ArtTimeCode()
             timecode.deserialize(data)
 
             logging.debug(f"Received Time Code from {addr[0]}:\n"
-                  f"  Current time/frame : {timecode.hours}:{timecode.minutes}:{timecode.seconds}.{timecode.frames}\n"
-                  f"  Type               : {timecode.type}")
+                          f"  Current time/frame : {timecode.hours}:{timecode.minutes}:{timecode.seconds}.{timecode.frames}\n"
+                          f"  Type               : {timecode.type}")
 
         elif opcode == OpCode.OP_COMMAND:
             command = ArtCommand()
             command.deserialize(data)
 
             logging.debug(f"Received command from {addr[0]}\n"
-                  f"  ESTA    : {command.esta}\n"
-                  f"  Command : {command.command}")
+                          f"  ESTA    : {command.esta}\n"
+                          f"  Command : {command.command}")
             self.handle_command(command)
 
         elif opcode == OpCode.OP_TRIGGER:
@@ -377,9 +379,9 @@ class ArtNetServer(asyncio.DatagramProtocol):
             trigger.deserialize(data)
 
             logging.debug(f"Received trigger from {addr[0]}\n"
-                  f"  OEM    : {trigger.oem}\n"
-                  f"  Key    : {trigger.key}\n"
-                  f"  Subkey : {trigger.sub_key}")
+                          f"  OEM    : {trigger.oem}\n"
+                          f"  Key    : {trigger.key}\n"
+                          f"  Subkey : {trigger.sub_key}")
             self.handle_trigger(trigger)
 
         elif opcode == OpCode.OP_OUTPUT_DMX:
@@ -387,7 +389,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
             dmx.deserialize(data)
 
             logging.debug(f"Received DMX data from {addr[0]}\n"
-                  f"  Address: {dmx.port_address}")
+                          f"  Address: {dmx.port_address}")
             self.handle_dmx(dmx)
 
     def should_handle_ports(self, lower_port: PortAddress, upper_port: PortAddress) -> bool:
@@ -398,7 +400,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
 
         return not (lower_port > upper_port_listener or upper_port < lowest_port_listener)
 
-    def handle_poll_reply(self, addr, reply):
+    async def handle_poll_reply(self, addr, reply):
         if addr == self.own_ip:
             logging.debug("Ignoring ArtPollReply as it came ourselves own address.")
             return
@@ -498,8 +500,6 @@ class ArtNetServer(asyncio.DatagramProtocol):
         if own_port.port.last_input_seen < cutoff_time:
             own_port.port.good_input.data_received = False
             self.update_subscribers()
-
-
 
 # server = ArtNetServer(firmware_version=1, short_name="Test python", long_name="Hello I am testing ArtNet server",
 #                       polling=True)

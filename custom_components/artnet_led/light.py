@@ -34,6 +34,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_registry import async_get
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util.color import color_rgb_to_rgbw
+from pyartnet import BaseUniverse, Channel
+from pyartnet.errors import UniverseNotFoundError
 
 from custom_components.artnet_led.bridge.artnet_controller import ArtNetController
 
@@ -71,10 +73,10 @@ AVAILABLE_CORRECTIONS = {"linear": pyartnet.output_correction.linear, "quadratic
                          "cubic": pyartnet.output_correction.cubic, "quadruple": pyartnet.output_correction.quadruple}
 
 CHANNEL_SIZE = {
-    "8bit": 1,
-    "16bit": 2,
-    "24bit": 3,
-    "32bit": 4
+    "8bit": (1, 1),
+    "16bit": (2, 256),
+    "24bit": (3, 256 ** 2),
+    "32bit": (4, 256 ** 3),
 }
 
 NODES = {}
@@ -116,6 +118,7 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
         if "server" not in NODES:
             __node = ArtNetController(hass, max_fps=max_fps, refresh_every=refresh_interval)
             NODES["server"] = __node
+            await __node.start()
 
         node = NODES["server"]
     elif client_type == "sacn":
@@ -157,8 +160,8 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
     for universe_nr, universe_cfg in config[CONF_NODE_UNIVERSES].items():
         try:
             universe = node.get_universe(universe_nr)
-        except KeyError:
-            universe = node.add_universe(universe_nr)
+        except UniverseNotFoundError:
+            universe: BaseUniverse = node.add_universe(universe_nr)
             universe.output_correction = AVAILABLE_CORRECTIONS.get(
                 universe_cfg[CONF_OUTPUT_CORRECTION]
             )
@@ -175,7 +178,7 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
             unique_id = f"{DOMAIN}:{host}/{universe_nr}/{channel}"
 
             name: str = device[CONF_DEVICE_NAME]
-            byte_size = CHANNEL_SIZE[device[CONF_CHANNEL_SIZE]]
+            byte_size = CHANNEL_SIZE[device[CONF_CHANNEL_SIZE]][0]
             byte_order = device[CONF_BYTE_ORDER]
 
             entity_id = f"light.{name.replace(' ', '_').lower()}"
@@ -198,7 +201,6 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
                     start=channel,
                     width=d.channel_width,
                     channel_name=d.name,
-                    channel_type=d.channel_size[1],
                     byte_size=byte_size,
                     byte_order=byte_order,
                 )
@@ -213,8 +215,8 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
             device_list.append(d)
 
             send_partial_universe = universe_cfg[CONF_SEND_PARTIAL_UNIVERSE]
-            if not send_partial_universe and universe.highest_channel != 512:
-                universe.add_channel(start=512, width=1, channel_name="Full universe hack")
+            if not send_partial_universe:
+                universe._resize_universe(512)
 
     async_add_devices(device_list)
 
@@ -229,7 +231,7 @@ def convert_to_mireds(kelvin_string):
 class DmxBaseLight(LightEntity, RestoreEntity):
     def __init__(self, name, unique_id: str, **kwargs):
         self._name = name
-        self._channel = kwargs[CONF_DEVICE_CHANNEL]
+        self._channel: Channel = kwargs[CONF_DEVICE_CHANNEL]
 
         self._unique_id = unique_id
 
@@ -292,10 +294,10 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         data = {"type": self._type,
                 "dmx_channels": [
                     k for k in range(
-                        self._channel.start, self._channel.start + self._channel.width, 1
+                        self._channel._start, self._channel._start + self._channel._width, 1
                     )
                 ],
-                "dmx_values": self._channel.get_channel_values(),
+                "dmx_values": self._channel.get_values(),
                 "values": self._vals,
                 "bright": self._brightness,
                 "transition": self._transition
@@ -351,7 +353,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         self._transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
 
         self._channel.add_fade(
-            self.get_target_values(), self._transition * 1000, pyartnet.fades.LinearFade
+            self.get_target_values(), self._transition * 1000
         )
 
         self.async_schedule_update_ha_state()
@@ -367,9 +369,8 @@ class DmxBaseLight(LightEntity, RestoreEntity):
             "Turning off '%s' with transition  %i", self._name, self._transition
         )
         self._channel.add_fade(
-            [0 for _ in range(self._channel.width)],
-            self._transition * 1000,
-            pyartnet.fades.LinearFade,
+            [0 for _ in range(self._channel._width)],
+            self._transition * 1000
         )
 
         self._state = False
@@ -412,7 +413,7 @@ class DmxFixed(DmxBaseLight):
         self._channel_width = 1
 
     def get_target_values(self):
-        return [self.brightness * self._channel_size[2]]
+        return [self.brightness * self._channel_size[1]]
 
     async def async_turn_on(self, **kwargs):
         pass  # do nothing, fixed is constant value
@@ -435,13 +436,13 @@ class DmxBinary(DmxBaseLight):
         self._color_mode = COLOR_MODE_ONOFF
 
     def get_target_values(self):
-        return [self.brightness * self._channel_size[2]]
+        return [self.brightness * self._channel_size[1]]
 
     async def async_turn_on(self, **kwargs):
         self._state = True
         self._brightness = 255
         self._channel.add_fade(
-            self.get_target_values(), 0, pyartnet.fades.LinearFade
+            self.get_target_values(), 0
         )
         self.async_schedule_update_ha_state()
 
@@ -449,7 +450,7 @@ class DmxBinary(DmxBaseLight):
         self._state = False
         self._brightness = 0
         self._channel.add_fade(
-            self.get_target_values(), 0, pyartnet.fades.LinearFade
+            self.get_target_values(), 0
         )
         self.async_schedule_update_ha_state()
 
@@ -475,7 +476,7 @@ class DmxDimmer(DmxBaseLight):
         self._color_mode = COLOR_MODE_BRIGHTNESS
 
     def get_target_values(self):
-        return [self.brightness * self._channel_size[2]]
+        return [self.brightness * self._channel_size[1]]
 
     async def async_turn_on(self, **kwargs):
 
@@ -559,7 +560,7 @@ class DmxWhite(DmxBaseLight):
             if value < 0 or value > 256:
                 log.warning(f"Value for channel {channel} isn't within bound: {value}")
                 value = max(0, min(256, value))
-            values.append(int(round(value * self._channel_size[2])))
+            values.append(int(round(value * self._channel_size[1])))
 
         return values
 
@@ -649,7 +650,7 @@ class DmxRGB(DmxBaseLight):
             if value < 0 or value > 256:
                 log.warning(f"Value for channel {channel} isn't within bound: {value}")
                 value = max(0, min(256, value))
-            values.append(int(round(value * self._channel_size[2])))
+            values.append(int(round(value * self._channel_size[1])))
 
         return values
 
@@ -738,7 +739,7 @@ class DmxRGBW(DmxBaseLight):
             if value < 0 or value > 256:
                 log.warning(f"Value for channel {channel} isn't within bound: {value}")
                 value = max(0, min(256, value))
-            values.append(int(round(value * self._channel_size[2])))
+            values.append(int(round(value * self._channel_size[1])))
 
         return values
 
@@ -853,7 +854,7 @@ class DmxRGBWW(DmxBaseLight):
             if value < 0 or value > 256:
                 log.warning(f"Value for channel {channel} isn't within bound: {value}")
                 value = max(0, min(256, value))
-            values.append(int(round(value * self._channel_size[2])))
+            values.append(int(round(value * self._channel_size[1])))
 
         return values
 

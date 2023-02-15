@@ -83,6 +83,6 @@ def reply():
 
     return package
 
-poll_broadcast()
+# poll_broadcast()
 
 # set port.goodoutputa.data_being_transmitted when doing ArtNetSync
