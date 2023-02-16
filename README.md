@@ -13,7 +13,7 @@ The DMX integration for Home Assistant allows you to send DMX values to an [Art-
 - [x] Implement custom_white
 - [x] Reimplement KiNet
 - [x] Implement sACN (https://github.com/jnimmo/hass-dmx/pull/66)
-- [ ] Stop animation thread when not animating (https://github.com/jnimmo/hass-dmx/pull/8#issuecomment-449679960)
+- [x] Stop animation thread when not animating (https://github.com/jnimmo/hass-dmx/pull/8#issuecomment-449679960)
 
 ## WIP before submitting it to Home Assistant core integrations
 
