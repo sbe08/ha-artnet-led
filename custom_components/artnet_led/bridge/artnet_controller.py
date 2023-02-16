@@ -12,6 +12,7 @@ from custom_components.artnet_led.client import PortAddress
 from custom_components.artnet_led.client.artnet_server import ArtNetServer
 
 log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
 
 HA_OEM = 0x2BE9
 
@@ -23,13 +24,15 @@ class ArtNetController(BaseNode):
     def __init__(self, hass: HomeAssistant, max_fps: int = 25, refresh_every: int = 2):
         super().__init__("", 0, max_fps=max_fps, refresh_every=0, start_refresh_task=False)
 
+        self._hass = hass
+
         self.__server = ArtNetServer(hass, state_update_callback=self.update_dmx_data, oem=HA_OEM,
                                      short_name="ha-artnet-led", long_name="HomeAssistant ArtNet integration",
                                      retransmit_time_ms=int(refresh_every / 1000.0)
                                      )
 
     def _send_universe(self, id: int, byte_size: int, values: bytearray, universe: pyartnet.impl_artnet.ArtNetUniverse):
-        log.debug(f"Going to send universe {universe._universe}: {universe._data.hex}")
+        log.debug(f"Going to send universe {universe._universe}: {universe._data.hex()}")
         self.__server.send_dmx(PortAddress(self.NET, self.SUB_NET, universe._universe), universe._data)
 
     def _create_universe(self, nr: int) -> TYPE_U:
@@ -44,7 +47,7 @@ class ArtNetController(BaseNode):
         return dmx_universe
 
     async def start(self):
-        self.__server.start_server()
+        return self.__server.start_server()
 
     def update_dmx_data(self, address: PortAddress, data: bytearray):
         assert address.net == self.NET

@@ -45,6 +45,7 @@ CONF_INITIAL_VALUES = "initial_values"
 CONF_SEND_PARTIAL_UNIVERSE = "send_partial_universe"
 
 log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
 
 CONF_NODE_TYPE = "node_type"
 CONF_NODE_MAX_FPS = "max_fps"
@@ -77,12 +78,8 @@ NODES = {}
 
 
 async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, discovery_info=None):
-    import pprint
 
     pyartnet.base.CREATE_TASK = hass.async_create_task
-
-    for line in pprint.pformat(config).splitlines():
-        log.debug(line)
 
     client_type = config.get(CONF_NODE_TYPE)
     max_fps = config.get(CONF_NODE_MAX_FPS)
@@ -728,7 +725,6 @@ class DmxRGBW(DmxBaseLight):
         values = list()
         for channel in self._channel_setup:
             calculation_function = switcher.get(channel, functools.partial(self._default_calculation_function, channel))
-            log.info(f"DEBUGGY for {channel}: {calculation_function()}")
             value = calculation_function()
             if value < 0 or value > 256:
                 log.warning(f"Value for channel {channel} isn't within bound: {value}")

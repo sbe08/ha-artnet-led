@@ -1,4 +1,5 @@
 import datetime
+import logging
 from dataclasses import dataclass
 from enum import Enum
 
@@ -6,7 +7,10 @@ CLIENT_VERSION = 1
 
 PROTOCOL_VERSION = 0x000E
 PORT = 0x1936
-HOME_ASSISTANT_ESTA = map(ord, "HA")
+HOME_ASSISTANT_ESTA = ord('H') << 8 + ord('A')
+
+log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
 
 
 class OpCode(Enum):
@@ -157,6 +161,9 @@ class PortAddress:
     def __ge__(self, other):
         return self.net >= other.net or self.net == other.net and \
             (self.sub_net >= other.sub_net or self.sub_net == other.sub_net and self.universe >= other.universe)
+
+    def __repr__(self):
+        return str(self)
 
     def __str__(self):
         return f"{self.net}:{self.sub_net}:{self.universe}"
@@ -795,7 +802,7 @@ class ArtPollReply(ArtBase):
             self.long_name, index = self._consume_str(packet, index, 64)
             self.node_report, index = self._consume_str(packet, index, 64)
 
-            port_count, index = self._consume_hex_number_msb(packet, index)
+            port_count, index = self._consume_int_msb(packet, index)
             port_type_flags, index = self._take(packet, 4, index)
             good_input_flags, index = self._take(packet, 4, index)
             good_output_a_flags, index = self._take(packet, 4, index)
@@ -1282,7 +1289,7 @@ class ArtDmx(ArtBase):
     def __init__(self,
                  protocol_version: int = PROTOCOL_VERSION,
                  sequence_number: int = 0,
-                 physical: int =  0,
+                 physical: int = 0,
                  port_address: PortAddress = PortAddress(0, 0, 0),
                  data: bytearray = [0x00] * 2
                  ) -> None:
