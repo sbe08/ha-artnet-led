@@ -107,39 +107,19 @@ class StyleCode(Enum):
     # @formatter:on
 
 
+@dataclass(order=True)
 class PortAddress:
+    net: int = 0
+    sub_net: int = 0
+    universe: int = 0
     def __init__(self, net: int, sub_net: int, universe: int = 0) -> None:
         super().__init__()
         assert (0 <= net <= 0xF)
         assert (0 <= sub_net <= 0xF)
         assert (0 <= universe <= 0x1FF)
-        self._net = net
-        self._sub_net = sub_net
-        self._universe = universe
-
-    @property
-    def net(self):
-        return self._net
-
-    @net.setter
-    def net(self, net):
-        self._net = net
-
-    @property
-    def sub_net(self):
-        return self._sub_net
-
-    @sub_net.setter
-    def sub_net(self, sub_net):
-        self._sub_net = sub_net
-
-    @property
-    def universe(self):
-        return self._universe
-
-    @universe.setter
-    def universe(self, universe):
-        self._universe = universe
+        self.net = net
+        self.sub_net = sub_net
+        self.universe = universe
 
     @property
     def port_address(self):
@@ -147,29 +127,20 @@ class PortAddress:
 
     @port_address.setter
     def port_address(self, port_address):
-        self._net = port_address >> 13 & 0xF
-        self._sub_net = port_address >> 9 & 0xF
-        self._universe = port_address & 0x1FF
+        self.net = port_address >> 13 & 0xF
+        self.sub_net = port_address >> 9 & 0xF
+        self.universe = port_address & 0x1FF
 
-    def __eq__(self, other):
-        return self.net == other.net and self.sub_net == other.sub_net and self.universe == other.universe
-
-    def __gt__(self, other):
-        return self.net > other.net or self.net == other.net and \
-            (self.sub_net > other.sub_net or self.sub_net == other.sub_net and self.universe > other.universe)
-
-    def __ge__(self, other):
-        return self.net >= other.net or self.net == other.net and \
-            (self.sub_net >= other.sub_net or self.sub_net == other.sub_net and self.universe >= other.universe)
-
-    def __repr__(self):
-        return str(self)
+    @staticmethod
+    def parse(port_address: int):
+        return PortAddress(port_address >> 13 & 0xF, port_address >> 9 & 0xF, port_address & 0x1FF)
 
     def __str__(self):
         return f"{self.net}:{self.sub_net}:{self.universe}"
 
     def __hash__(self):
         return self.port_address
+
 
 
 class IndicatorState(Enum):
@@ -1174,6 +1145,7 @@ class ArtTimeCode(ArtBase):
         packet.append(self.minutes)
         packet.append(self.hours)
         packet.append(self.type.value)
+        return packet
 
     def deserialize(self, packet: bytearray) -> int:
         index = 0
