@@ -78,7 +78,6 @@ NODES = {}
 
 
 async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, discovery_info=None):
-
     pyartnet.base.CREATE_TASK = hass.async_create_task
 
     client_type = config.get(CONF_NODE_TYPE)
@@ -343,7 +342,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
 
         self._transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
 
-        self._channel.add_fade(
+        self._channel.set_fade(
             self.get_target_values(), self._transition * 1000
         )
 
@@ -359,7 +358,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         log.debug(
             "Turning off '%s' with transition  %i", self._name, self._transition
         )
-        self._channel.add_fade(
+        self._channel.set_fade(
             [0 for _ in range(self._channel._width)],
             self._transition * 1000
         )
@@ -432,7 +431,7 @@ class DmxBinary(DmxBaseLight):
     async def async_turn_on(self, **kwargs):
         self._state = True
         self._brightness = 255
-        self._channel.add_fade(
+        self._channel.set_fade(
             self.get_target_values(), 0
         )
         self.async_schedule_update_ha_state()
@@ -440,7 +439,7 @@ class DmxBinary(DmxBaseLight):
     async def async_turn_off(self, **kwargs):
         self._state = False
         self._brightness = 0
-        self._channel.add_fade(
+        self._channel.set_fade(
             self.get_target_values(), 0
         )
         self.async_schedule_update_ha_state()

@@ -11,7 +11,7 @@
     "@Breina"
   ],
   "requirements": [
-    "pyartnet==1.0.0"
+    "pyartnet==1.0.1"
   ],
   "iot_class": "local_push",
   "version": "0.1.0"
