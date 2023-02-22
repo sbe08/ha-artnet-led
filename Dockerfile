@@ -1,0 +1,16 @@
+FROM ghcr.io/home-assistant/home-assistant:stable
+
+ENV privileged=true
+ENV network=host
+
+# HA
+EXPOSE 8123:8123/tcp
+
+# Art-Net
+EXPOSE 6454:6454/udp
+
+COPY staging/.storage /config/.storage
+
+COPY staging/configuration.yaml /config/configuration.yaml
+
+COPY custom_components /config/custom_components

@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "minor_version": 10,
+  "key": "core.entity_registry",
+  "data": {
+    "entities": [
+      {
+        "aliases": [],
+        "area_id": null,
+        "capabilities": {
+          "min_color_temp_kelvin": 2500,
+          "max_color_temp_kelvin": 6535,
+          "min_mireds": 153,
+          "max_mireds": 400,
+          "supported_color_modes": [
+            "color_temp",
+            "white"
+          ]
+        },
+        "config_entry_id": null,
+        "device_class": null,
+        "device_id": null,
+        "disabled_by": null,
+        "entity_category": null,
+        "entity_id": "light.eetkamer_zw",
+        "hidden_by": null,
+        "icon": null,
+        "id": "220ecdcdcc86763c9f1b14bb87bf82a3",
+        "has_entity_name": false,
+        "name": null,
+        "options": {},
+        "original_device_class": null,
+        "original_icon": null,
+        "original_name": "Eetkamer ZW",
+        "platform": "artnet_led",
+        "supported_features": 32,
+        "translation_key": null,
+        "unique_id": "dmx:192.168.1.15/0/105",
+        "unit_of_measurement": null
+      },
+      {
+        "aliases": [],
+        "area_id": null,
+        "capabilities": null,
+        "config_entry_id": null,
+        "device_class": null,
+        "device_id": null,
+        "disabled_by": null,
+        "entity_category": null,
+        "entity_id": "person.admin",
+        "hidden_by": null,
+        "icon": null,
+        "id": "3781b293cc53fddc950769a86a44886f",
+        "has_entity_name": false,
+        "name": null,
+        "options": {},
+        "original_device_class": null,
+        "original_icon": null,
+        "original_name": "admin",
+        "platform": "person",
+        "supported_features": 0,
+        "translation_key": null,
+        "unique_id": "admin",
+        "unit_of_measurement": null
+      }
+    ]
+  }
+}

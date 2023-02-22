@@ -1,0 +1,46 @@
+homeassistant:
+  name: ha-artnet-led local dev env
+  latitude: 0
+  longitude: 0
+  elevation: 0
+  unit_system: metric
+  time_zone: Europe/London
+  internal_url: http://localhost:8123
+  external_url: http://localhost:8123
+  legacy_templates: 0
+  currency: EUR
+
+light:
+  - platform: artnet_led
+    host: 192.168.1.15
+    max_fps: 43
+    refresh_every: 0
+    node_type: artnet-controller
+    universes:
+      0:
+        send_partial_universe: True
+        output_correction: quadratic
+        devices:
+          - channel: 105
+            name: Eetkamer ZW
+            type: color_temp
+            transition: 0
+            channel_size: 16bit
+            min_temp: 2500K
+            max_temp: 6500K
+
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+# Text to speech
+#tts:
+#  - platform: google_translate
+
+#automation: !include automations.yaml
+#script: !include scripts.yaml
+#scene: !include scenes.yaml
