@@ -1,13 +1,13 @@
 import logging
 from asyncio import sleep
 
-import pyartnet
 from homeassistant.core import HomeAssistant
 from pyartnet import BaseUniverse
 from pyartnet.base import BaseNode
 from pyartnet.base.base_node import TYPE_U
 from pyartnet.errors import InvalidUniverseAddressError
 
+from custom_components.artnet_led.bridge.universe_bridge import UniverseBridge
 from custom_components.artnet_led.client import PortAddress
 from custom_components.artnet_led.client.artnet_server import ArtNetServer
 
@@ -29,7 +29,7 @@ class ArtNetController(BaseNode):
                                      retransmit_time_ms=int(refresh_every * 1000.0)
                                      )
 
-    def _send_universe(self, id: int, byte_size: int, values: bytearray, universe: pyartnet.impl_artnet.ArtNetUniverse):
+    def _send_universe(self, id: int, byte_size: int, values: bytearray, universe: BaseUniverse):
         port_address = PortAddress.parse(id)
 
         log.debug(f"Going to send to port address {port_address}")
@@ -38,7 +38,7 @@ class ArtNetController(BaseNode):
     def _create_universe(self, nr: int) -> TYPE_U:
         if nr >= 32_768:
             raise InvalidUniverseAddressError()
-        return pyartnet.impl_artnet.ArtNetUniverse(self, nr)
+        return UniverseBridge(self, nr)
 
     def add_universe(self, nr: int = 0) -> BaseUniverse:
         dmx_universe = super().add_universe(nr)
@@ -46,12 +46,14 @@ class ArtNetController(BaseNode):
         self.__server.add_port(PortAddress.parse(nr))
         return dmx_universe
 
-    async def start(self):
+    def start(self):
         return self.__server.start_server()
 
+    def get_universe(self, nr: int) -> UniverseBridge:
+        return super().get_universe(nr)
+
     def update_dmx_data(self, address: PortAddress, data: bytearray):
-        self.get_universe(address.port_address).data = data
-#         TODO schedule HA state update
+        self.get_universe(address.port_address).receive_data(data)
 
     async def _process_values_task(self):
         log.debug(f"Processing values changed")

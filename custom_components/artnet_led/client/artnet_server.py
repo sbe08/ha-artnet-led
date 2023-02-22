@@ -52,6 +52,9 @@ class Node:
 
         return input_ports.union(output_ports)
 
+    def __repr__(self) -> str:
+        return str(self)
+
     def __str__(self):
         return f"{self.net_switch}:{self.sub_switch}:*@{inet_ntoa(self.addr)}#{self.bind_index}"
 
@@ -161,11 +164,12 @@ class ArtNetServer(asyncio.DatagramProtocol):
         nodes = self.nodes_by_port_address[port_address]
         if not nodes:
             return
-        nodes.remove(node)
+        if node in nodes:
+            nodes.remove(node)
         if not nodes:
             del self.nodes_by_port_address[port_address]
 
-        if node not in self.nodes_by_ip.values:
+        if node not in self.nodes_by_ip.values():
             self.node_change_subscribers.remove(inet_ntoa(node.addr))
 
     def update_subscribers(self):
@@ -228,16 +232,19 @@ class ArtNetServer(asyncio.DatagramProtocol):
     async def remove_stale_nodes(self):
         await asyncio.sleep(3)
 
-        cutoff_time = datetime.datetime.now() - datetime.timedelta(seconds=3)
+        cutoff_time: datetime.datetime = datetime.datetime.now() - datetime.timedelta(seconds=3)
 
-        for (ip, bind_index) in self.nodes_by_ip:
-            if self.get_node_by_ip(ip, bind_index).last_seen >= cutoff_time:
+        for (ip, bind_index), node in self.nodes_by_ip.items():
+            if node.last_seen >= cutoff_time:
                 continue
 
-            log.warning(f"Haven't seen node {bind_index} for a while; removing it.")
+            time_delta: datetime.timedelta = node.last_seen - cutoff_time
+
+            log.warning(f"Haven't seen node {inet_ntoa(ip)}#{bind_index} for {time_delta.seconds} seconds;"
+                        f" removing it.")
             del self.nodes_by_ip[(ip, bind_index)]
-            for node_address in bind_index.get_addresses():
-                self.remove_node_by_port_address(node_address, bind_index)
+            for node_address in node.get_addresses():
+                self.remove_node_by_port_address(node_address, node)
 
     @staticmethod
     def send_artnet(art_packet: ArtBase, ip: str):

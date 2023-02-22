@@ -3,6 +3,8 @@ from __future__ import annotations
 import functools
 import logging
 import time
+from array import array
+from typing import Union
 
 import homeassistant.helpers.config_validation as cv
 import homeassistant.util.color as color_util
@@ -38,6 +40,7 @@ from pyartnet import BaseUniverse, Channel
 from pyartnet.errors import UniverseNotFoundError
 
 from custom_components.artnet_led.bridge.artnet_controller import ArtNetController
+from custom_components.artnet_led.bridge.channel_bridge import ChannelBridge
 
 CONF_DEVICE_TRANSITION = ATTR_TRANSITION
 
@@ -108,9 +111,9 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
         if "server" not in NODES:
             __node = ArtNetController(hass, max_fps=max_fps, refresh_every=refresh_interval)
             NODES["server"] = __node
-            await __node.start()
-
+            __node.start()
         node = NODES["server"]
+
     elif client_type == "sacn":
         __id = f"{host}:{port}"
         if __id not in NODES:
@@ -221,7 +224,7 @@ def convert_to_mireds(kelvin_string):
 class DmxBaseLight(LightEntity, RestoreEntity):
     def __init__(self, name, unique_id: str, **kwargs):
         self._name = name
-        self._channel: Channel = kwargs[CONF_DEVICE_CHANNEL]
+        self._channel: Union[Channel, ChannelBridge] = kwargs[CONF_DEVICE_CHANNEL]
 
         self._unique_id = unique_id
 
@@ -233,7 +236,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         self._state = False
         self._channel_size = CHANNEL_SIZE[kwargs[CONF_CHANNEL_SIZE]]
         self._color_mode = kwargs[CONF_DEVICE_TYPE]
-        self._vals = 0
+        self._vals = []
         self._features = 0
         self._supported_color_modes = set()
         self._channel_last_update = 0
@@ -247,6 +250,9 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         """Set the channel"""
         self._channel = channel
         self._channel.callback_fade_finished = self._channel_fade_finish
+
+        if isinstance(channel, ChannelBridge):
+            channel.callback_values_updated = self._update_values
 
     def set_type(self, type):
         self._type = type
@@ -317,11 +323,17 @@ class DmxBaseLight(LightEntity, RestoreEntity):
     def fade_time(self, value):
         self._fade_time = value
 
-    def _channel_value_change(self, channel):
+    def _update_values(self, values: array[int]):
+        assert len(values) == len(self._vals)
+        self._vals = tuple(values)
+
+        self._channel_value_change()
+
+    def _channel_value_change(self):
         """Schedule update while fade is running"""
         if time.time() - self._channel_last_update > 1.1:
             self._channel_last_update = time.time()
-            self.async_schedule_update_ha_state()
+            # self.async_schedule_update_ha_state()
 
     def _channel_fade_finish(self, channel):
         """Fade is finished -> schedule update"""
@@ -518,6 +530,11 @@ class DmxWhite(DmxBaseLight):
     def max_mireds(self) -> int:
         """Return the warmest color_temp that this light supports."""
         return self._max_mireds
+
+    def _update_values(self, values: array[int]):
+        self._vals = values[0]
+
+        self._channel_value_change()
 
     def get_target_values(self):
         # d = dimmer
