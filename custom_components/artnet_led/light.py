@@ -333,7 +333,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         """Schedule update while fade is running"""
         if time.time() - self._channel_last_update > 1.1:
             self._channel_last_update = time.time()
-            # self.async_schedule_update_ha_state()
+            self.async_schedule_update_ha_state()
 
     def _channel_fade_finish(self, channel):
         """Fade is finished -> schedule update"""
@@ -564,7 +564,7 @@ class DmxWhite(DmxBaseLight):
         for channel in self._channel_setup:
             calculation_function = switcher.get(channel, functools.partial(self._default_calculation_function, channel))
             value = calculation_function()
-            if value < 0 or value > 256:
+            if value < 0 or value > 255:
                 log.warning(f"Value for channel {channel} isn't within bound: {value}")
                 value = max(0, min(256, value))
             values.append(int(round(value * self._channel_size[1])))

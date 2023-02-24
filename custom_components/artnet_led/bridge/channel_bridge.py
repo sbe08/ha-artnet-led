@@ -122,8 +122,8 @@ class ChannelBridge:
         # correction = self.__channel._correction_current
         # value_max = self.__channel._value_max
 
-        start_index = self.__channel._start
-        end_index = self.__channel._stop + 1
+        start_index = self.__channel._start - 1
+        end_index = self.__channel._stop
 
         byte_chunks = self.__chunks(buf[start_index:end_index], byte_size)
 
@@ -132,26 +132,24 @@ class ChannelBridge:
                   for byte_chunk in byte_chunks
                   if len(byte_chunk) == byte_size]
         )
-        values_act = values_act + array[None] * (len(self.__channel._values_act) - len(values_act))
+        values_act = values_act + array(values_act.typecode, [-1] * (len(self.__channel._values_act) - len(values_act)))
 
         changed = False
         for act_value_index, act_value in enumerate(values_act):
-            if act_value is None:
+            if act_value == -1:
                 log.warning(f"Channel {start_index + act_value_index} was updated externally, but is part of an "
                             f"incomplete {byte_size} byte number. This is very likely unintended by the external "
                             f"controller.")
+                break
+
+            if self.__channel._values_act[act_value_index] == act_value:
                 continue
 
-            if self.__channel._values_act[act_value_index] == values_act[act_value_index]:
-                continue
-
-            self.__channel._values_act[act_value_index] = values_act[act_value_index]
+            self.__channel._values_act[act_value_index] = act_value
             changed = True
 
         if not changed:
             return
-
-        self.__channel._values_act = values_act
 
         # TODO reverse correction not supported yet
         # values_raw = [round(correction.reverse_correct(val, value_max)) for val in values_act]

@@ -1,8 +1,5 @@
 FROM ghcr.io/home-assistant/home-assistant:stable
 
-ENV privileged=true
-ENV network=host
-
 # HA
 EXPOSE 8123:8123/tcp
 

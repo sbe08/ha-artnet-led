@@ -170,7 +170,9 @@ class ArtNetServer(asyncio.DatagramProtocol):
             del self.nodes_by_port_address[port_address]
 
         if node not in self.nodes_by_ip.values():
-            self.node_change_subscribers.remove(inet_ntoa(node.addr))
+            ip_str = inet_ntoa(node.addr)
+            if ip_str in self.node_change_subscribers:
+                self.node_change_subscribers.remove(ip_str)
 
     def update_subscribers(self):
         for subscriber in self.node_change_subscribers:
@@ -222,6 +224,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
                 log.debug("Sending ArtPoll")
                 with socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) as sock:
                     sock.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)
+                    sock.setblocking(False)
                     sock.sendto(poll.serialize(), ("255.255.255.255", 0x1936))
 
                 self.__hass.async_create_task(self.remove_stale_nodes())
@@ -230,21 +233,27 @@ class ArtNetServer(asyncio.DatagramProtocol):
             await asyncio.sleep(random.uniform(2.5, 3))
 
     async def remove_stale_nodes(self):
-        await asyncio.sleep(3)
+        await asyncio.sleep(5)
 
-        cutoff_time: datetime.datetime = datetime.datetime.now() - datetime.timedelta(seconds=3)
+        now = datetime.datetime.now()
+        cutoff_time: datetime.datetime = now - datetime.timedelta(seconds=5)
+
+        nodes_by_ip_to_delete = []
 
         for (ip, bind_index), node in self.nodes_by_ip.items():
-            if node.last_seen >= cutoff_time:
+            if node.last_seen > cutoff_time:
                 continue
 
-            time_delta: datetime.timedelta = node.last_seen - cutoff_time
+            time_delta: datetime.timedelta = now - node.last_seen
 
             log.warning(f"Haven't seen node {inet_ntoa(ip)}#{bind_index} for {time_delta.seconds} seconds;"
                         f" removing it.")
-            del self.nodes_by_ip[(ip, bind_index)]
+            nodes_by_ip_to_delete += [(ip, bind_index)]
             for node_address in node.get_addresses():
                 self.remove_node_by_port_address(node_address, node)
+
+        for (ip, bind_index) in nodes_by_ip_to_delete:
+            del self.nodes_by_ip[(ip, bind_index)]
 
     @staticmethod
     def send_artnet(art_packet: ArtBase, ip: str):
@@ -360,9 +369,9 @@ class ArtNetServer(asyncio.DatagramProtocol):
         super().connection_lost(exc)
 
     def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
-        self.__hass.async_create_task(self.handle_datagram(addr, data))
+        self.handle_datagram(addr, data)
 
-    async def handle_datagram(self, addr, data):
+    def handle_datagram(self, addr, data):
         data = bytearray(data)
         opcode = ArtBase.peek_opcode(data)
         if opcode == OpCode.OP_POLL:
@@ -377,7 +386,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
             reply.deserialize(data)
 
             log.debug(f"Received ArtPollReply from {reply.long_name}")
-            await self.handle_poll_reply(addr, reply)
+            self.handle_poll_reply(addr, reply)
 
         elif opcode == OpCode.OP_IP_PROG:
             log.debug(f"Received IP prog request from {addr[0]}, ignoring...")
@@ -439,6 +448,8 @@ class ArtNetServer(asyncio.DatagramProtocol):
             log.debug(f"Received DMX data from {addr[0]}\n"
                       f"  Address: {dmx.port_address}")
             self.handle_dmx(dmx)
+        else:
+            log.warning(f"Received Opcode {opcode}, which isn't supported yet!")
 
     def should_handle_ports(self, lower_port: PortAddress, upper_port: PortAddress) -> bool:
         if not self.own_port_addresses:
@@ -450,7 +461,12 @@ class ArtNetServer(asyncio.DatagramProtocol):
 
         return not (lower_port > port_bounds[1] or upper_port < port_bounds[0])
 
-    async def handle_poll_reply(self, addr, reply):
+    def handle_poll_reply(self, addr, reply):
+        if reply.source_ip is not bytes([0x00] * 4):
+            source_ip = inet_aton(inet_ntoa(reply.source_ip))
+        else:
+            source_ip = inet_aton(addr[0])
+
         if addr == self._own_ip:
             log.debug("Ignoring ArtPollReply as it came ourselves own address.")
             return
@@ -462,24 +478,23 @@ class ArtNetServer(asyncio.DatagramProtocol):
 
         if reply.node_report:
             log.debug(f"  {reply.node_report}")
-        ip_bytes = inet_aton(addr[0])
 
         # Maintain data structures
         bind_index = reply.bind_index
-        node = self.get_node_by_ip(ip_bytes, bind_index)
+        node = self.get_node_by_ip(source_ip, bind_index)
 
         current_time = datetime.datetime.now()
         if not node:
-            node = Node(ip_bytes, bind_index, current_time)
-            self.add_node_by_ip(node, ip_bytes, bind_index)
-            log.info(f"Discovered new node at {addr[0]}@{bind_index} with "
-                     f"{reply.net_switch}/{reply.sub_switch}/[{','.join([str(p.sw_out) for p in reply.ports])}]"
+            node = Node(source_ip, bind_index, current_time)
+            self.add_node_by_ip(node, source_ip, bind_index)
+            log.info(f"Discovered new node at {inet_ntoa(source_ip)}@{bind_index} with "
+                     f"{reply.net_switch}:{reply.sub_switch}:[{','.join([str(p.sw_out) for p in reply.ports])}]"
                      )
 
         else:
             node.last_seen = current_time
-            log.debug(f"Existing node checking in {addr[0]}@{bind_index} with "
-                      f"{reply.net_switch}/{reply.sub_switch}/[{','.join([str(p.sw_out) for p in reply.ports])}]"
+            log.debug(f"Existing node checking in {inet_ntoa(source_ip)}@{bind_index} with "
+                      f"{reply.net_switch}:{reply.sub_switch}:[{','.join([str(p.sw_out) for p in reply.ports])}]"
                       )
 
         old_addresses = node.get_addresses()
@@ -488,7 +503,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
         node.ports = reply.ports
 
         new_addresses = node.get_addresses()
-        log.debug(f"Addresses of the node at {addr[0]}@{bind_index}: {new_addresses}")
+        log.debug(f"Addresses of the node at {inet_ntoa(source_ip)}@{bind_index}: {new_addresses}")
         addresses_to_remove = old_addresses - new_addresses
 
         for address_to_remove in addresses_to_remove:
@@ -497,7 +512,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
         for new_address in new_addresses:
             self.add_node_by_port_address(new_address, node)
 
-            if addr[0] != self._own_ip:
+            if source_ip != self._own_ip:
                 self.status_message = "Discovered some ArtNet nodes!"
 
                 if self.indicator_state == IndicatorState.LOCATE_IDENTIFY:
