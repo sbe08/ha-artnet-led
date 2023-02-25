@@ -23,7 +23,7 @@ from homeassistant.components.light import (
     COLOR_MODE_RGBWW,
     SUPPORT_TRANSITION,
     PLATFORM_SCHEMA,
-    LightEntity, COLOR_MODE_ONOFF, COLOR_MODE_WHITE, COLOR_MODE_UNKNOWN, SUPPORT_EFFECT, SUPPORT_FLASH,
+    LightEntity, COLOR_MODE_ONOFF, COLOR_MODE_WHITE, SUPPORT_EFFECT, SUPPORT_FLASH,
 )
 from homeassistant.const import CONF_DEVICES, STATE_OFF, STATE_ON
 from homeassistant.const import CONF_FRIENDLY_NAME as CONF_DEVICE_FRIENDLY_NAME
@@ -44,7 +44,6 @@ from custom_components.channel_switch import validate, to_values, from_values
 
 CONF_DEVICE_TRANSITION = ATTR_TRANSITION
 
-CONF_INITIAL_VALUES = "initial_values"
 CONF_SEND_PARTIAL_UNIVERSE = "send_partial_universe"
 
 log = logging.getLogger(__name__)
@@ -56,7 +55,6 @@ CONF_NODE_REFRESH = "refresh_every"
 CONF_NODE_UNIVERSES = "universes"
 
 CONF_DEVICE_CHANNEL = "channel"
-CONF_DEVICE_VALUE = "value"
 CONF_OUTPUT_CORRECTION = "output_correction"
 CONF_CHANNEL_SIZE = "channel_size"
 CONF_BYTE_ORDER = "byte_order"
@@ -159,10 +157,6 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
                 universe_cfg[CONF_OUTPUT_CORRECTION]
             )
 
-        if CONF_INITIAL_VALUES in universe_cfg.keys():
-            for _ in universe_cfg[CONF_INITIAL_VALUES]:  # type: dict
-                pass
-
         for device in universe_cfg[CONF_DEVICES]:  # type: dict
             device = device.copy()
             cls = __CLASS_TYPE[device[CONF_DEVICE_TYPE]]
@@ -203,8 +197,6 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
                 device[CONF_OUTPUT_CORRECTION]
             )
 
-            d.set_initial_brightness(device[CONF_DEVICE_VALUE])
-
             device_list.append(d)
 
             send_partial_universe = universe_cfg[CONF_SEND_PARTIAL_UNIVERSE]
@@ -229,8 +221,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         self._unique_id = unique_id
 
         self.entity_id = f"light.{name.replace(' ', '_').lower()}"
-        self._brightness = 255
-        self._attr_brightness = self._brightness
+        self._attr_brightness = 255
         self._fade_time = kwargs[CONF_DEVICE_TRANSITION]
         self._transition = self._fade_time
         self._state = False
@@ -257,9 +248,6 @@ class DmxBaseLight(LightEntity, RestoreEntity):
     def set_type(self, type):
         self._type = type
 
-    def set_initial_brightness(self, brightness):
-        self._brightness = brightness
-
     @property
     def name(self):
         """Return the display name of this light."""
@@ -269,11 +257,6 @@ class DmxBaseLight(LightEntity, RestoreEntity):
     def unique_id(self):
         """Return unique ID for light."""
         return self._unique_id
-
-    @property
-    def brightness(self):
-        """Return the brightness of the light."""
-        return self._brightness
 
     @property
     def color_mode(self) -> str | None:
@@ -291,6 +274,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
 
     @property
     def extra_state_attributes(self):
+        # TODO extra_state_attributes really shouldn't have lots of changing values like this, it pollutes the DB
         data = {"type": self._type,
                 "dmx_channels": [
                     k for k in range(
@@ -299,7 +283,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
                 ],
                 "dmx_values": self._channel.get_values(),
                 "values": self._vals,
-                "bright": self._brightness,
+                "bright": self._attr_brightness,
                 "transition": self._transition
                 }
         self._channel_last_update = time.time()
@@ -446,7 +430,7 @@ class DmxBinary(DmxBaseLight):
 
     async def async_turn_on(self, **kwargs):
         self._state = True
-        self._brightness = 255
+        self._attr_brightness = 255
         self._channel.set_fade(
             self.get_target_values(), 0
         )
@@ -454,7 +438,7 @@ class DmxBinary(DmxBaseLight):
 
     async def async_turn_off(self, **kwargs):
         self._state = False
-        self._brightness = 0
+        self._attr_brightness = 0
         self._channel.set_fade(
             self.get_target_values(), 0
         )
@@ -463,7 +447,7 @@ class DmxBinary(DmxBaseLight):
     async def restore_state(self, old_state):
         log.debug("Added binary light to hass. Try restoring state.")
         self._state = old_state.state
-        self._brightness = old_state.attributes.get('bright')
+        self._attr_brightness = old_state.attributes.get('bright')
 
         if old_state.state == STATE_ON:
             await self.async_turn_on()
@@ -484,13 +468,13 @@ class DmxDimmer(DmxBaseLight):
         validate(self._channel_setup, self.CONF_TYPE)
 
     def get_target_values(self):
-        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._brightness)
+        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._attr_brightness)
 
     async def async_turn_on(self, **kwargs):
 
         # Update state from service call
         if ATTR_BRIGHTNESS in kwargs:
-            self._brightness = kwargs[ATTR_BRIGHTNESS]
+            self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
 
         await super().async_create_fade(**kwargs)
 
@@ -499,10 +483,10 @@ class DmxDimmer(DmxBaseLight):
 
         if old_state:
             prev_brightness = old_state.attributes.get('bright')
-            self._brightness = prev_brightness
+            self._attr_brightness = prev_brightness
 
         if old_state.state != STATE_OFF:
-            await super().async_create_fade(brightness=self._brightness, transition=0)
+            await super().async_create_fade(brightness=self._attr_brightness, transition=0)
 
 
 class DmxWhite(DmxBaseLight):
@@ -542,13 +526,13 @@ class DmxWhite(DmxBaseLight):
         return self._max_mireds
 
     def _update_values(self, values: array[int]):
-        self._state, self._brightness, _, _, _, _, _, color_temp = from_values(self._channel_setup, self.channel_size[1], values, self._min_mireds, self._max_mireds)
+        self._state, self._attr_brightness, _, _, _, _, _, color_temp = from_values(self._channel_setup, self.channel_size[1], values, self._min_mireds, self._max_mireds)
         self._vals = color_temp
 
         self._channel_value_change()
 
     def get_target_values(self):
-        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._brightness,
+        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._attr_brightness,
                          color_temp=self.color_temp, min_mireds=self.min_mireds, max_mireds=self.max_mireds)
 
     async def async_turn_on(self, **kwargs):
@@ -559,8 +543,8 @@ class DmxWhite(DmxBaseLight):
             self._vals = kwargs[ATTR_COLOR_TEMP]
 
         if ATTR_BRIGHTNESS in kwargs:
-            self._brightness = kwargs[ATTR_BRIGHTNESS]
-            self._scale_factor = self._brightness / 255
+            self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
+            self._scale_factor = self._attr_brightness / 255
 
         await super().async_create_fade(**kwargs)
         return None
@@ -572,10 +556,10 @@ class DmxWhite(DmxBaseLight):
             prev_vals = old_state.attributes.get('values')
             self._vals = prev_vals
             prev_brightness = old_state.attributes.get('bright')
-            self._brightness = prev_brightness
+            self._attr_brightness = prev_brightness
 
         if old_state.state != STATE_OFF:
-            await super().async_create_fade(brightness=self._brightness, rgb_color=self._vals, transition=0)
+            await super().async_create_fade(brightness=self._attr_brightness, rgb_color=self._vals, transition=0)
 
 
 class DmxRGB(DmxBaseLight):
@@ -610,7 +594,7 @@ class DmxRGB(DmxBaseLight):
         else:
             white = -1
 
-        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._brightness, red, green, blue,
+        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._attr_brightness, red, green, blue,
                          white)
 
     async def async_turn_on(self, **kwargs):
@@ -623,8 +607,8 @@ class DmxRGB(DmxBaseLight):
             self._vals = kwargs[ATTR_RGB_COLOR]
 
         if ATTR_BRIGHTNESS in kwargs:
-            self._brightness = kwargs[ATTR_BRIGHTNESS]
-            self._scale_factor = self._brightness / 255
+            self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
+            self._scale_factor = self._attr_brightness / 255
 
         await super().async_create_fade(**kwargs)
         return None
@@ -636,10 +620,10 @@ class DmxRGB(DmxBaseLight):
             prev_vals = old_state.attributes.get('values')
             self._vals = prev_vals
             prev_brightness = old_state.attributes.get('bright')
-            self._brightness = prev_brightness
+            self._attr_brightness = prev_brightness
 
         if old_state.state != STATE_OFF:
-            await super().async_create_fade(brightness=self._brightness, rgb_color=self._vals, transition=0)
+            await super().async_create_fade(brightness=self._attr_brightness, rgb_color=self._vals, transition=0)
 
 
 class DmxRGBW(DmxBaseLight):
@@ -668,7 +652,7 @@ class DmxRGBW(DmxBaseLight):
         blue = self._vals[2]
         white = self._vals[3]
 
-        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._brightness, red, green, blue,
+        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._attr_brightness, red, green, blue,
                          white)
 
     async def async_turn_on(self, **kwargs):
@@ -681,8 +665,8 @@ class DmxRGBW(DmxBaseLight):
             # self._scale_factor = 1
 
         if ATTR_BRIGHTNESS in kwargs:
-            self._brightness = kwargs[ATTR_BRIGHTNESS]
-            self._scale_factor = self._brightness / 255
+            self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
+            self._scale_factor = self._attr_brightness / 255
 
         await super().async_create_fade(**kwargs)
         return None
@@ -695,10 +679,10 @@ class DmxRGBW(DmxBaseLight):
             self._vals = prev_vals
 
             prev_brightness = old_state.attributes.get('bright')
-            self._brightness = prev_brightness
+            self._attr_brightness = prev_brightness
 
         if old_state.state != STATE_OFF:
-            await super().async_create_fade(brightness=self._brightness, rgbw_color=self._vals, transition=0)
+            await super().async_create_fade(brightness=self._attr_brightness, rgbw_color=self._vals, transition=0)
 
 
 class DmxRGBWW(DmxBaseLight):
@@ -745,7 +729,7 @@ class DmxRGBWW(DmxBaseLight):
         cold_white = self._vals[3]
         warm_white = self._vals[4]
 
-        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._brightness, red, green, blue,
+        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._attr_brightness, red, green, blue,
                          cold_white, warm_white, self.color_temp, self.min_mireds, self.max_mireds)
 
     async def async_turn_on(self, **kwargs):
@@ -759,8 +743,8 @@ class DmxRGBWW(DmxBaseLight):
             # self._scale_factor = 1
 
         if ATTR_BRIGHTNESS in kwargs:
-            self._brightness = kwargs[ATTR_BRIGHTNESS]
-            self._scale_factor = self._brightness / 255
+            self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
+            self._scale_factor = self._attr_brightness / 255
 
         await super().async_create_fade(**kwargs)
         return None
@@ -773,11 +757,11 @@ class DmxRGBWW(DmxBaseLight):
             self._vals = prev_vals
 
             prev_brightness = old_state.attributes.get('bright')
-            self._brightness = prev_brightness
-            self._scale_factor = self._brightness / 255
+            self._attr_brightness = prev_brightness
+            self._scale_factor = self._attr_brightness / 255
 
         if old_state.state != STATE_OFF:
-            await super().async_create_fade(brightness=self._brightness, rgbww_color=self._vals, transition=0)
+            await super().async_create_fade(brightness=self._attr_brightness, rgbww_color=self._vals, transition=0)
 
 
 # ------------------------------------------------------------------------------
@@ -820,9 +804,6 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
                             vol.Optional(CONF_BYTE_ORDER, default='big'): vol.Any(
                                 None, vol.In(['little', 'big'])
                             ),
-                            vol.Optional(CONF_DEVICE_VALUE, default=0): vol.All(
-                                vol.Coerce(int), vol.Range(min=0, max=255)
-                            ),
                             vol.Optional(CONF_DEVICE_MIN_TEMP, default='2700K'): vol.Match(
                                 "\\d+(k|K)"
                             ),
@@ -834,20 +815,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
                             ),
                         }
                     ],
-                ),
-                vol.Optional(CONF_INITIAL_VALUES): vol.All(
-                    cv.ensure_list,
-                    [
-                        {
-                            vol.Required(CONF_DEVICE_CHANNEL): vol.All(
-                                vol.Coerce(int), vol.Range(min=1, max=512)
-                            ),
-                            vol.Required(CONF_DEVICE_VALUE): vol.All(
-                                vol.Coerce(int), vol.Range(min=0, max=255)
-                            ),
-                        }
-                    ],
-                ),
+                )
             },
         },
         vol.Optional(CONF_NODE_PORT, default=6454): cv.port,
