@@ -23,8 +23,7 @@ from homeassistant.components.light import (
     COLOR_MODE_RGBWW,
     SUPPORT_TRANSITION,
     PLATFORM_SCHEMA,
-    LightEntity, COLOR_MODE_ONOFF, COLOR_MODE_WHITE, SUPPORT_EFFECT, SUPPORT_FLASH,
-)
+    LightEntity, COLOR_MODE_ONOFF, COLOR_MODE_WHITE)
 from homeassistant.const import CONF_DEVICES, STATE_OFF, STATE_ON
 from homeassistant.const import CONF_FRIENDLY_NAME as CONF_DEVICE_FRIENDLY_NAME
 from homeassistant.const import CONF_HOST as CONF_NODE_HOST
@@ -40,7 +39,7 @@ from pyartnet.errors import UniverseNotFoundError
 
 from custom_components.artnet_led.bridge.artnet_controller import ArtNetController
 from custom_components.artnet_led.bridge.channel_bridge import ChannelBridge
-from custom_components.channel_switch import validate, to_values, from_values
+from custom_components.artnet_led.util.channel_switch import validate, to_values, from_values
 
 CONF_DEVICE_TRANSITION = ATTR_TRANSITION
 
