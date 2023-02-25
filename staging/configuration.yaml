@@ -9,13 +9,19 @@ light:
         send_partial_universe: True
         output_correction: quadratic
         devices:
-          - channel: 13
-            name: Test light
-            type: color_temp
+#          - channel: 13
+#            name: Test light
+#            type: color_temp
+#            transition: 0
+#            channel_size: 16bit
+#            min_temp: 2500K
+#            max_temp: 6500K
+          - channel: 1
+            name: Test light RGB
+            type: rgb
             transition: 0
             channel_size: 16bit
-            min_temp: 2500K
-            max_temp: 6500K
+
 
 
 # Loads default set of integrations. Do not remove.

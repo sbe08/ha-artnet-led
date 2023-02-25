@@ -88,7 +88,6 @@ def from_values(channel_setup: str, channel_size: int, values: list[int],
 
     assert len(channel_setup) == len(values)
 
-    is_on: bool = False
     brightness: int | None = None
     red: int | None = None
     green: int | None = None
@@ -104,6 +103,7 @@ def from_values(channel_setup: str, channel_size: int, values: list[int],
 
         if channel == "d":
             brightness = value
+            break
 
         elif channel in "rgbwch":
             if brightness is None or value > brightness:
@@ -120,17 +120,25 @@ def from_values(channel_setup: str, channel_size: int, values: list[int],
     for index, channel in enumerate(channel_setup):
         value = floor(values[index] / channel_size)
 
-        channel_caseless = str.lower(channel)
-
-        if channel_caseless == "r":
+        if channel == "r":
+            red = _scale_brightness(value, brightness)
+        elif channel == "R":
             red = value
-        elif channel_caseless == "g":
+        elif channel == "g":
+            green = _scale_brightness(value, brightness)
+        elif channel == "G":
             green = value
-        elif channel_caseless == "b":
+        elif channel == "b":
+            blue = _scale_brightness(value, brightness)
+        elif channel == "B":
             blue = value
-        elif channel_caseless in "wc":
+        elif channel in "wc":
+            cold_white = _scale_brightness(value, brightness)
+        elif channel in "WC":
             cold_white = value
-        elif channel_caseless == "h":
+        elif channel == "h":
+            warm_white = _scale_brightness(value, brightness)
+        elif channel == "H":
             warm_white = value
         elif channel == "t":
             cold_white = value
@@ -142,23 +150,22 @@ def from_values(channel_setup: str, channel_size: int, values: list[int],
     elif cold_white is not None and warm_white is None:
         warm_white = 255 - cold_white
 
-    # Saturate colors
-    if brightness != 0:
-        red = _scale_brightness(red, brightness)
-        green = _scale_brightness(green, brightness)
-        blue = _scale_brightness(blue, brightness)
-        cold_white = _scale_brightness(cold_white, brightness)
-        warm_white = _scale_brightness(warm_white, brightness)
-
     if min_mireds is not None and max_mireds is not None:
-        warm = warm_white * warm_white / (cold_white + warm_white)
-        color_temp = round(min_mireds * warm / 255 + min_mireds + max_mireds * warm / 255)
+        white_sum = cold_white + warm_white
+        if white_sum == 0:
+            color_temp = round((min_mireds + max_mireds) / 2 + min_mireds)
+        else:
+            warm_ratio = warm_white / (white_sum)
+            color_temp = round(min_mireds - min_mireds * warm_ratio + max_mireds * warm_ratio)
 
     return is_on, brightness, red, green, blue, cold_white, warm_white, color_temp
 
 def _scale_brightness(value: int | None, brightness: int) -> int | None:
     if value is not None:
-        return round(value * 255 / brightness)
+        if brightness == 0:
+            return value
+        else:
+            return round(value * 255 / brightness)
 
 class IllegalChannelSetup(IntegrationError):
     def __init__(self, reason: str):

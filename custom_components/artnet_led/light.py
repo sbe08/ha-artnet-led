@@ -269,10 +269,6 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         return self._features
 
     @property
-    def effect_list(self) -> list[str] | None:
-        return ["Strobe", "Starry night", "Puking rainbows"]
-
-    @property
     def extra_state_attributes(self):
         # TODO extra_state_attributes really shouldn't have lots of changing values like this, it pollutes the DB
         data = {"type": self._type,
@@ -425,6 +421,11 @@ class DmxBinary(DmxBaseLight):
         self._supported_color_modes.add(COLOR_MODE_ONOFF)
         self._color_mode = COLOR_MODE_ONOFF
 
+    def _update_values(self, values: array[int]):
+        self._state, _, _, _, _, _, _, color_temp = from_values("d", self.channel_size[1], values)
+
+        self._channel_value_change()
+
     def get_target_values(self):
         return [self.brightness * self._channel_size[1]]
 
@@ -467,6 +468,12 @@ class DmxDimmer(DmxBaseLight):
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "d"
         validate(self._channel_setup, self.CONF_TYPE)
 
+    def _update_values(self, values: array[int]):
+        self._state, self._attr_brightness, _, _, _, _, _, _ = \
+            from_values(self._channel_setup, self.channel_size[1], values)
+
+        self._channel_value_change()
+
     def get_target_values(self):
         return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._attr_brightness)
 
@@ -497,13 +504,13 @@ class DmxWhite(DmxBaseLight):
         self._supported_color_modes.add(COLOR_MODE_COLOR_TEMP)
         self._supported_color_modes.add(COLOR_MODE_WHITE)
 
-        self._features = SUPPORT_TRANSITION | SUPPORT_FLASH | SUPPORT_EFFECT
+        self._features = SUPPORT_TRANSITION
 
         self._color_mode = COLOR_MODE_COLOR_TEMP
         # Intentionally switching min and max here; it's inverted in the conversion.
         self._min_mireds = convert_to_mireds(kwargs[CONF_DEVICE_MAX_TEMP])
         self._max_mireds = convert_to_mireds(kwargs[CONF_DEVICE_MIN_TEMP])
-        self._vals = (self._max_mireds + self._min_mireds) / 2 or 300
+        self._vals = (self._max_mireds + self._min_mireds) / 2 + self._min_mireds or 300
 
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "ch"
         validate(self._channel_setup, self.CONF_TYPE)
@@ -584,6 +591,14 @@ class DmxRGB(DmxBaseLight):
         """Return the rgb color value."""
         return self._vals
 
+    def _update_values(self, values: array[int]):
+        self._state, self._attr_brightness, red, green, blue, _, _, _ = \
+            from_values(self._channel_setup, self.channel_size[1], values)
+
+        self._vals = (red, green, blue)
+
+        self._channel_value_change()
+
     def get_target_values(self):
         red = self._vals[0]
         green = self._vals[1]
@@ -646,6 +661,14 @@ class DmxRGBW(DmxBaseLight):
         """Return the rgbw color value."""
         return self._vals
 
+    def _update_values(self, values: array[int]):
+        self._state, self._attr_brightness, red, green, blue, white, _, _ = \
+            from_values(self._channel_setup, self.channel_size[1], values)
+
+        self._vals = (red, green, blue, white)
+
+        self._channel_value_change()
+
     def get_target_values(self):
         red = self._vals[0]
         green = self._vals[1]
@@ -702,6 +725,14 @@ class DmxRGBWW(DmxBaseLight):
         validate(self._channel_setup, self.CONF_TYPE)
 
         self._channel_width = len(self._channel_setup)
+
+    def _update_values(self, values: array[int]):
+        self._state, self._attr_brightness, red, green, blue, cold_white, warm_white, _ = \
+            from_values(self._channel_setup, self.channel_size[1], values)
+
+        self._vals = (red, green, blue, cold_white, warm_white)
+
+        self._channel_value_change()
 
     @property
     def rgbww_color(self) -> tuple:
