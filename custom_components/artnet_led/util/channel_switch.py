@@ -74,7 +74,7 @@ def to_values(channel_setup: str, channel_size: int, is_on: bool = True, brightn
     values: list[int] = list()
     for channel in channel_setup:
         calculation_function = switcher.get(channel, functools.partial(_default_calculation_function, channel))
-        value = calculation_function()
+        value = floor(calculation_function())
         if not (0 <= value <= 255):
             log.warning(f"Value for channel {channel} isn't within bound: {value}")
             value = max(0, min(255, value))
