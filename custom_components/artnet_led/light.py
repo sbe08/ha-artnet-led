@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import functools
 import logging
 import time
 from array import array
@@ -24,7 +23,7 @@ from homeassistant.components.light import (
     COLOR_MODE_RGBWW,
     SUPPORT_TRANSITION,
     PLATFORM_SCHEMA,
-    LightEntity, COLOR_MODE_ONOFF, COLOR_MODE_WHITE,
+    LightEntity, COLOR_MODE_ONOFF, COLOR_MODE_WHITE, COLOR_MODE_UNKNOWN, SUPPORT_EFFECT, SUPPORT_FLASH,
 )
 from homeassistant.const import CONF_DEVICES, STATE_OFF, STATE_ON
 from homeassistant.const import CONF_FRIENDLY_NAME as CONF_DEVICE_FRIENDLY_NAME
@@ -41,6 +40,7 @@ from pyartnet.errors import UniverseNotFoundError
 
 from custom_components.artnet_led.bridge.artnet_controller import ArtNetController
 from custom_components.artnet_led.bridge.channel_bridge import ChannelBridge
+from custom_components.channel_switch import validate, to_values, from_values
 
 CONF_DEVICE_TRANSITION = ATTR_TRANSITION
 
@@ -286,6 +286,10 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         return self._features
 
     @property
+    def effect_list(self) -> list[str] | None:
+        return ["Strobe", "Starry night", "Puking rainbows"]
+
+    @property
     def extra_state_attributes(self):
         data = {"type": self._type,
                 "dmx_channels": [
@@ -333,7 +337,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         """Schedule update while fade is running"""
         if time.time() - self._channel_last_update > 1.1:
             self._channel_last_update = time.time()
-            self.async_schedule_update_ha_state()
+        self.async_schedule_update_ha_state()
 
     def _channel_fade_finish(self, channel):
         """Fade is finished -> schedule update"""
@@ -476,9 +480,11 @@ class DmxDimmer(DmxBaseLight):
         self._supported_color_modes.add(COLOR_MODE_BRIGHTNESS)
         self._features = SUPPORT_TRANSITION
         self._color_mode = COLOR_MODE_BRIGHTNESS
+        self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "d"
+        validate(self._channel_setup, self.CONF_TYPE)
 
     def get_target_values(self):
-        return [self.brightness * self._channel_size[1]]
+        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._brightness)
 
     async def async_turn_on(self, **kwargs):
 
@@ -506,7 +512,9 @@ class DmxWhite(DmxBaseLight):
         super().__init__(**kwargs)
         self._supported_color_modes.add(COLOR_MODE_COLOR_TEMP)
         self._supported_color_modes.add(COLOR_MODE_WHITE)
-        self._features = SUPPORT_TRANSITION
+
+        self._features = SUPPORT_TRANSITION | SUPPORT_FLASH | SUPPORT_EFFECT
+
         self._color_mode = COLOR_MODE_COLOR_TEMP
         # Intentionally switching min and max here; it's inverted in the conversion.
         self._min_mireds = convert_to_mireds(kwargs[CONF_DEVICE_MAX_TEMP])
@@ -514,6 +522,8 @@ class DmxWhite(DmxBaseLight):
         self._vals = (self._max_mireds + self._min_mireds) / 2 or 300
 
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "ch"
+        validate(self._channel_setup, self.CONF_TYPE)
+
         self._channel_width = len(self._channel_setup)
 
     @property
@@ -532,44 +542,14 @@ class DmxWhite(DmxBaseLight):
         return self._max_mireds
 
     def _update_values(self, values: array[int]):
-        self._vals = values[0]
+        self._state, self._brightness, _, _, _, _, _, color_temp = from_values(self._channel_setup, self.channel_size[1], values, self._min_mireds, self._max_mireds)
+        self._vals = color_temp
 
         self._channel_value_change()
 
     def get_target_values(self):
-        # d = dimmer
-        # c = cool (scaled for brightness)
-        # C = cool (not scaled)
-        # h = hot (scaled for brightness)
-        # H = hot (not scaled)
-        # t = temperature (0 = hot, 255 = cold)
-        # T = temperature (255 = hot, 0 = cold)
-
-        ww_fraction = (self.color_temp - self.min_mireds) \
-                      / (self.max_mireds - self.min_mireds)
-        cw_fraction = 1 - ww_fraction
-        max_fraction = max(ww_fraction, cw_fraction)
-
-        switcher = {
-            "d": lambda: self._brightness,
-            "c": lambda: self.is_on * self._brightness * (cw_fraction / max_fraction),
-            "C": lambda: self.is_on * cw_fraction * 255 / max_fraction,
-            "h": lambda: self.is_on * self._brightness * (ww_fraction / max_fraction),
-            "H": lambda: self.is_on * ww_fraction * 255 / max_fraction,
-            "t": lambda: 255 - (ww_fraction * 255),
-            "T": lambda: ww_fraction * 255
-        }
-
-        values = list()
-        for channel in self._channel_setup:
-            calculation_function = switcher.get(channel, functools.partial(self._default_calculation_function, channel))
-            value = calculation_function()
-            if value < 0 or value > 255:
-                log.warning(f"Value for channel {channel} isn't within bound: {value}")
-                value = max(0, min(256, value))
-            values.append(int(round(value * self._channel_size[1])))
-
-        return values
+        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._brightness,
+                         color_temp=self.color_temp, min_mireds=self.min_mireds, max_mireds=self.max_mireds)
 
     async def async_turn_on(self, **kwargs):
         """
@@ -609,6 +589,8 @@ class DmxRGB(DmxBaseLight):
         self._vals = (255, 255, 255)
 
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "rgb"
+        validate(self._channel_setup, self.CONF_TYPE)
+
         self._channel_width = len(self._channel_setup)
 
         self._auto_scale_white = "w" in self._channel_setup or "W" in self._channel_setup
@@ -619,47 +601,17 @@ class DmxRGB(DmxBaseLight):
         return self._vals
 
     def get_target_values(self):
-        # d = dimmer
-        # r = red (scaled for brightness)
-        # R = red (not scaled)
-        # g = green (scaled for brightness)
-        # G = green (not scaled)
-        # b = blue (scaled for brightness)
-        # B = blue (not scaled)
-        # w = white (automatically calculated, scaled for brightness)
-        # W = white (automatically calculated, not scaled)
-
         red = self._vals[0]
         green = self._vals[1]
         blue = self._vals[2]
 
         if self._auto_scale_white:
             red, green, blue, white = color_rgb_to_rgbw(red, green, blue)
+        else:
+            white = -1
 
-        max_color = max(1, max(self._vals))
-
-        switcher = {
-            "d": lambda: self._brightness,
-            "r": lambda: self.is_on * red * self._brightness / max_color,
-            "R": lambda: self.is_on * red * 255 / max_color,
-            "g": lambda: self.is_on * green * self._brightness / max_color,
-            "G": lambda: self.is_on * green * 255 / max_color,
-            "b": lambda: self.is_on * blue * self._brightness / max_color,
-            "B": lambda: self.is_on * blue * 255 / max_color,
-            "w": lambda: self.is_on * white * self._brightness / max_color,
-            "W": lambda: self.is_on * white * 255 / max_color
-        }
-
-        values = list()
-        for channel in self._channel_setup:
-            calculation_function = switcher.get(channel, functools.partial(self._default_calculation_function, channel))
-            value = calculation_function()
-            if value < 0 or value > 256:
-                log.warning(f"Value for channel {channel} isn't within bound: {value}")
-                value = max(0, min(256, value))
-            values.append(int(round(value * self._channel_size[1])))
-
-        return values
+        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._brightness, red, green, blue,
+                         white)
 
     async def async_turn_on(self, **kwargs):
         """
@@ -701,6 +653,8 @@ class DmxRGBW(DmxBaseLight):
         self._vals = (255, 255, 255, 255)
 
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "rgbw"
+        validate(self._channel_setup, self.CONF_TYPE)
+
         self._channel_width = len(self._channel_setup)
 
     @property
@@ -709,45 +663,13 @@ class DmxRGBW(DmxBaseLight):
         return self._vals
 
     def get_target_values(self):
-        # d = dimmer
-        # r = red (scaled for brightness)
-        # R = red (not scaled)
-        # g = green (scaled for brightness)
-        # G = green (not scaled)
-        # b = blue (scaled for brightness)
-        # B = blue (not scaled)
-        # w = white (scaled for brightness)
-        # W = white (not scaled)
-
         red = self._vals[0]
         green = self._vals[1]
         blue = self._vals[2]
         white = self._vals[3]
 
-        max_color = max(1, max(self._vals))
-
-        switcher = {
-            "d": lambda: self._brightness,
-            "r": lambda: self.is_on * red * self._brightness / max_color,
-            "R": lambda: self.is_on * red * 255 / max_color,
-            "g": lambda: self.is_on * green * self._brightness / max_color,
-            "G": lambda: self.is_on * green * 255 / max_color,
-            "b": lambda: self.is_on * blue * self._brightness / max_color,
-            "B": lambda: self.is_on * blue * 255 / max_color,
-            "w": lambda: self.is_on * white * self._brightness / max_color,
-            "W": lambda: self.is_on * white * 255 / max_color,
-        }
-
-        values = list()
-        for channel in self._channel_setup:
-            calculation_function = switcher.get(channel, functools.partial(self._default_calculation_function, channel))
-            value = calculation_function()
-            if value < 0 or value > 256:
-                log.warning(f"Value for channel {channel} isn't within bound: {value}")
-                value = max(0, min(256, value))
-            values.append(int(round(value * self._channel_size[1])))
-
-        return values
+        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._brightness, red, green, blue,
+                         white)
 
     async def async_turn_on(self, **kwargs):
         """
@@ -793,6 +715,8 @@ class DmxRGBWW(DmxBaseLight):
         self._vals = (255, 255, 255, 255, 255)
 
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "rgbch"
+        validate(self._channel_setup, self.CONF_TYPE)
+
         self._channel_width = len(self._channel_setup)
 
     @property
@@ -815,54 +739,14 @@ class DmxRGBWW(DmxBaseLight):
         return color_util.rgbww_to_color_temperature(self._vals, self.min_mireds, self.max_mireds)[0]
 
     def get_target_values(self):
-        # d = dimmer
-        # r = red (scaled for brightness)
-        # R = red (not scaled)
-        # g = green (scaled for brightness)
-        # G = green (not scaled)
-        # b = blue (scaled for brightness)
-        # B = blue (not scaled)
-        # c = cool (scaled for brightness)
-        # C = cool (not scaled)
-        # h = hot (scaled for brightness)
-        # H = hot (not scaled)
-        # t = temperature (0 = hot, 255 = cold)
-        # T = temperature (255 = hot, 0 = cold)
-
         red = self._vals[0]
         green = self._vals[1]
         blue = self._vals[2]
         cold_white = self._vals[3]
         warm_white = self._vals[4]
 
-        max_color = max(1, max(self._vals))
-
-        switcher = {
-            "d": lambda: self._brightness,
-            "r": lambda: self.is_on * red * self._brightness / max_color,
-            "R": lambda: self.is_on * red * 255 / max_color,
-            "g": lambda: self.is_on * green * self._brightness / max_color,
-            "G": lambda: self.is_on * green * 255 / max_color,
-            "b": lambda: self.is_on * blue * self._brightness / max_color,
-            "B": lambda: self.is_on * blue * 255 / max_color,
-            "c": lambda: self.is_on * cold_white * self._brightness / max_color,
-            "C": lambda: self.is_on * cold_white * 255 / max_color,
-            "h": lambda: self.is_on * warm_white * self._brightness / max_color,
-            "H": lambda: self.is_on * warm_white * 255 / max_color,
-            "t": lambda: 255 - ((self.color_temp - self.min_mireds) / (self.max_mireds - self.min_mireds) * 255),
-            "T": lambda: (self.color_temp - self.min_mireds) / (self.max_mireds - self.min_mireds) * 255
-        }
-
-        values = list()
-        for channel in self._channel_setup:
-            calculation_function = switcher.get(channel, functools.partial(self._default_calculation_function, channel))
-            value = calculation_function()
-            if value < 0 or value > 256:
-                log.warning(f"Value for channel {channel} isn't within bound: {value}")
-                value = max(0, min(256, value))
-            values.append(int(round(value * self._channel_size[1])))
-
-        return values
+        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._brightness, red, green, blue,
+                         cold_white, warm_white, self.color_temp, self.min_mireds, self.max_mireds)
 
     async def async_turn_on(self, **kwargs):
         """
