@@ -9,23 +9,26 @@ light:
         send_partial_universe: True
         output_correction: quadratic
         devices:
-#          - channel: 13
-#            name: Test light
-#            type: color_temp
-#            transition: 0
-#            channel_size: 16bit
+          - channel: 13
+            name: Test light
+            type: color_temp
+            transition: 1
+            channel_size: 16bit
 #            min_temp: 2500K
 #            max_temp: 6500K
           - channel: 1
-            name: Test light RGB
-            type: rgb
+            name: Test light RGBW
+            type: rgbww
             transition: 0
             channel_size: 16bit
 
 logger:
   default: info
   logs:
-    custom_components.artnet_led: debug
+    custom_components.artnet_led: info
+
+debugpy:
+
 
 homeassistant:
   auth_providers:
