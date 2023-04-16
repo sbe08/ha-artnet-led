@@ -21,16 +21,31 @@ light:
             type: rgbww
             transition: 0
             channel_size: 16bit
-          - channel: 30
-            name: Test light DOS
-            type: binary
-            channel_size: 8bit
+#          - channel: 30
+#            name: Test light DOS
+#            type: binary
+#            channel_size: 8bit
 
 logger:
   default: info
   logs:
     custom_components.artnet_led: info
     pyartnet: debug
+
+scene:
+  - name: Romantic
+    icon: "mdi:flower-tulip"
+    entities:
+      light.test_light:
+        state: "on"
+        brightness: 200
+        transition: 10
+  - name: Movies
+    entities:
+      light.test_light:
+        state: "on"
+        brightness: 0
+        transition: 10
 
 debugpy:
 
