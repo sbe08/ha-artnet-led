@@ -77,9 +77,9 @@ def to_values(channel_setup: str, channel_size: int, is_on: bool = True, brightn
         "C": lambda: is_on * cold_white * 255 / max_color,
         "h": lambda: is_on * warm_white * brightness / max_color,
         "H": lambda: is_on * warm_white * 255 / max_color,
-        "t": lambda: 255 - (color_temp_kelvin - min_kelvin) * 255 / kelvin_diff,
-        "u": lambda: color_RGB_to_hsv(red, green ,blue)[0] * 255 / 360,
-        "T": lambda: (color_temp_kelvin - min_kelvin) * 255 / kelvin_diff,
+        "t": lambda: (color_temp_kelvin - min_kelvin) * 255 / kelvin_diff,
+        "T": lambda: 255 - (color_temp_kelvin - min_kelvin) * 255 / kelvin_diff,
+        "u": lambda: color_RGB_to_hsv(red, green, blue)[0] * 255 / 360,
         "U": lambda: color_RGB_to_hsv(red, green, blue)[1] * 255 / 100,
     }
 
