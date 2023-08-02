@@ -4,7 +4,7 @@ from math import floor
 from typing import Union
 
 from homeassistant.exceptions import IntegrationError
-from homeassistant.util.color import color_RGB_to_hsv, color_hsv_to_RGB
+from homeassistant.util.color import color_RGB_to_hsv, color_hsv_to_RGB, rgbww_to_color_temperature
 
 log = logging.getLogger(__name__)
 
@@ -34,10 +34,15 @@ def to_values(channel_setup: str, channel_size: int, is_on: bool = True, brightn
               green: int = -1, blue: int = -1, cold_white: int = -1, warm_white: int = -1,
               color_temp_kelvin: int | None = None, min_kelvin: int | None = None, max_kelvin: int | None = None
               ) -> list[int]:
-    if cold_white == -1 and warm_white == -1 \
-            and color_temp_kelvin is not None and min_kelvin is not None and max_kelvin is not None:
-        cold_white = 255 * (color_temp_kelvin - min_kelvin) / (max_kelvin - min_kelvin)
-        warm_white = 255 - cold_white
+
+    if min_kelvin is not None and max_kelvin is not None:
+        kelvin_diff = (max_kelvin - min_kelvin)
+
+        if cold_white == -1 and warm_white == -1 and color_temp_kelvin is not None:
+            cold_white = 255 * (color_temp_kelvin - min_kelvin) / kelvin_diff
+            warm_white = 255 - cold_white
+        elif cold_white != -1 and warm_white != -1 and color_temp_kelvin is None:
+            color_temp_kelvin, _ = rgbww_to_color_temperature((red, green, blue, cold_white, warm_white), min_kelvin, max_kelvin)
 
     max_color = max(1, max(red, green, blue, cold_white, warm_white))
 
@@ -72,9 +77,9 @@ def to_values(channel_setup: str, channel_size: int, is_on: bool = True, brightn
         "C": lambda: is_on * cold_white * 255 / max_color,
         "h": lambda: is_on * warm_white * brightness / max_color,
         "H": lambda: is_on * warm_white * 255 / max_color,
-        "t": lambda: cold_white,
-        "T": lambda: warm_white,
+        "t": lambda: 255 - (color_temp_kelvin - min_kelvin) * 255 / kelvin_diff,
         "u": lambda: color_RGB_to_hsv(red, green ,blue)[0] * 255 / 360,
+        "T": lambda: (color_temp_kelvin - min_kelvin) * 255 / kelvin_diff,
         "U": lambda: color_RGB_to_hsv(red, green, blue)[1] * 255 / 100,
     }
 

@@ -866,9 +866,9 @@ class DmxRGBWW(DmxBaseLight):
         cold_white = self._vals[3]
         warm_white = self._vals[4]
 
-        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._attr_brightness, red, green,
-                         blue,
-                         cold_white, warm_white, min_kelvin=self.min_color_temp_kelvin,
+        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._attr_brightness,
+                         red, green, blue, cold_white, warm_white,
+                         min_kelvin=self.min_color_temp_kelvin,
                          max_kelvin=self.max_color_temp_kelvin)
 
     async def async_turn_on(self, **kwargs):
