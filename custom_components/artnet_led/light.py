@@ -788,7 +788,7 @@ class DmxRGBW(DmxBaseLight):
         Instruct the light to turn on.
         """
 
-        old_values = self._vals
+        old_values = list(self._vals)
         old_brightness = self._attr_brightness
 
         # RGB already contains brightness information
@@ -837,7 +837,7 @@ class DmxRGBWW(DmxBaseLight):
         # Intentionally switching min and max here; it's inverted in the conversion.
         self._min_kelvin = convert_to_kelvin(kwargs[CONF_DEVICE_MIN_TEMP])
         self._max_kelvin = convert_to_kelvin(kwargs[CONF_DEVICE_MAX_TEMP])
-        self._vals = [255, 255, 255, 255, 255, 0]
+        self._vals = [255, 255, 255, 255, 255, (self._max_kelvin - self._min_kelvin) / 2]
 
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "rgbch"
         validate(self._channel_setup, self.CONF_TYPE)
@@ -889,7 +889,7 @@ class DmxRGBWW(DmxBaseLight):
         """
         Instruct the light to turn on.
         """
-        old_values = self._vals
+        old_values = list(self._vals)
         old_brightness = self._attr_brightness
 
         # RGB already contains brightness information
