@@ -928,7 +928,8 @@ class DmxRGBWW(DmxBaseLight):
 
         if old_state:
             prev_vals = old_state.attributes.get('values')
-            self._vals = prev_vals
+            if len(prev_vals) == 6:
+                self._vals = prev_vals
 
             prev_brightness = old_state.attributes.get('bright')
             self._attr_brightness = prev_brightness
