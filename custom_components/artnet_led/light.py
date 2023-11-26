@@ -769,7 +769,7 @@ class DmxRGBW(DmxBaseLight):
         self._state, self._attr_brightness, red, green, blue, white, _, _ = \
             from_values(self._channel_setup, self.channel_size[1], values)
 
-        self._vals = (red, green, blue, white)
+        self._vals = [red, green, blue, white]
 
         self._channel_value_change()
 
@@ -793,7 +793,7 @@ class DmxRGBW(DmxBaseLight):
 
         # RGB already contains brightness information
         if ATTR_RGBW_COLOR in kwargs:
-            self._vals = kwargs[ATTR_RGBW_COLOR]
+            self._vals = list(kwargs[ATTR_RGBW_COLOR])
 
         if ATTR_HS_COLOR in kwargs:
             hue, sat = kwargs[ATTR_HS_COLOR]

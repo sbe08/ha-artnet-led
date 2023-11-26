@@ -23,16 +23,8 @@ light:
             - 0
             - 0
         - channel: 6
-          name: rgbww_light
-          type: rgbww
-          min_temp: 2000K
-          max_temp: 6500K
-          channel_setup:
-            - d
-            - t
-            - 0
-            - u
-            - U
+          name: rgbw_light
+          type: rgbw
 
 logger:
   default: info
