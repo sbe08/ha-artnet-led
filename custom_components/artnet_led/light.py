@@ -16,15 +16,9 @@ from homeassistant.components.light import (
     ATTR_RGBW_COLOR,
     ATTR_RGBWW_COLOR,
     ATTR_TRANSITION,
-    COLOR_MODE_BRIGHTNESS,
-    COLOR_MODE_COLOR_TEMP,
-    COLOR_MODE_RGB,
-    COLOR_MODE_RGBW,
-    COLOR_MODE_RGBWW,
-    SUPPORT_TRANSITION,
     PLATFORM_SCHEMA,
-    LightEntity, COLOR_MODE_ONOFF, COLOR_MODE_WHITE, ATTR_WHITE, ATTR_COLOR_TEMP_KELVIN, SUPPORT_FLASH, ATTR_FLASH,
-    FLASH_SHORT, FLASH_LONG, COLOR_MODE_HS, ATTR_HS_COLOR)
+    LightEntity, ATTR_WHITE, ATTR_COLOR_TEMP_KELVIN, ATTR_FLASH,
+    FLASH_SHORT, FLASH_LONG, ATTR_HS_COLOR, LightEntityFeature, ColorMode)
 from homeassistant.const import CONF_DEVICES, STATE_OFF, STATE_ON
 from homeassistant.const import CONF_FRIENDLY_NAME as CONF_DEVICE_FRIENDLY_NAME
 from homeassistant.const import CONF_HOST as CONF_NODE_HOST
@@ -442,7 +436,7 @@ class DmxFixed(DmxBaseLight):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._color_mode = COLOR_MODE_ONOFF
+        self._color_mode = ColorMode.ONOFF
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or [255]
         self._channel_width = len(self._channel_setup)
 
@@ -470,9 +464,9 @@ class DmxBinary(DmxBaseLight):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._channel_width = 1
-        self._supported_color_modes.add(COLOR_MODE_ONOFF)
-        self._features = SUPPORT_FLASH
-        self._color_mode = COLOR_MODE_ONOFF
+        self._features = LightEntityFeature.FLASH
+        self._color_mode = ColorMode.ONOFF
+        self._supported_color_modes.add(ColorMode.ONOFF)
 
     def _update_values(self, values: array[int]):
         self._state, _, _, _, _, _, _, color_temp = from_values("d", self.channel_size[1], values)
@@ -538,9 +532,9 @@ class DmxDimmer(DmxBaseLight):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._channel_width = 1
-        self._supported_color_modes.add(COLOR_MODE_BRIGHTNESS)
-        self._features = SUPPORT_TRANSITION | SUPPORT_FLASH
-        self._color_mode = COLOR_MODE_BRIGHTNESS
+        self._features = LightEntityFeature.TRANSITION | LightEntityFeature.FLASH
+        self._color_mode = ColorMode.BRIGHTNESS
+        self._supported_color_modes.add(ColorMode.BRIGHTNESS)
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "d"
         validate(self._channel_setup, self.CONF_TYPE)
 
@@ -577,12 +571,12 @@ class DmxWhite(DmxBaseLight):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._supported_color_modes.add(COLOR_MODE_COLOR_TEMP)
-        self._supported_color_modes.add(COLOR_MODE_WHITE)
 
-        self._features = SUPPORT_TRANSITION | SUPPORT_FLASH
+        self._features = LightEntityFeature.TRANSITION | LightEntityFeature.FLASH
 
-        self._color_mode = COLOR_MODE_COLOR_TEMP
+        self._color_mode = ColorMode.COLOR_TEMP
+        self._supported_color_modes.add(ColorMode.COLOR_TEMP)
+        self._supported_color_modes.add(ColorMode.WHITE)
         # Intentionally switching min and max here; it's inverted in the conversion.
 
         self._min_kelvin = convert_to_kelvin(kwargs[CONF_DEVICE_MIN_TEMP])
@@ -665,10 +659,10 @@ class DmxRGB(DmxBaseLight):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._supported_color_modes.add(COLOR_MODE_RGB)
-        self._supported_color_modes.add(COLOR_MODE_HS)
-        self._features = SUPPORT_TRANSITION | SUPPORT_FLASH
-        self._color_mode = COLOR_MODE_RGB
+        self._features = LightEntityFeature.TRANSITION | LightEntityFeature.FLASH
+        self._color_mode = ColorMode.RGB
+        self._supported_color_modes.add(ColorMode.RGB)
+        self._supported_color_modes.add(ColorMode.HS)
         self._vals = (255, 255, 255)
 
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "rgb"
@@ -749,10 +743,10 @@ class DmxRGBW(DmxBaseLight):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._supported_color_modes.add(COLOR_MODE_RGBW)
-        self._supported_color_modes.add(COLOR_MODE_HS)
-        self._features = SUPPORT_TRANSITION | SUPPORT_FLASH
-        self._color_mode = COLOR_MODE_RGBW
+        self._features = LightEntityFeature.TRANSITION | LightEntityFeature.FLASH
+        self._color_mode = ColorMode.RGBW
+        self._supported_color_modes.add(ColorMode.RGBW)
+        self._supported_color_modes.add(ColorMode.HS)
         self._vals = [255, 255, 255, 255]
 
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "rgbw"
@@ -828,12 +822,13 @@ class DmxRGBWW(DmxBaseLight):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._supported_color_modes.add(COLOR_MODE_RGBWW)
-        self._supported_color_modes.add(COLOR_MODE_COLOR_TEMP)
-        self._supported_color_modes.add(COLOR_MODE_HS)
 
-        self._features = SUPPORT_TRANSITION | SUPPORT_FLASH
-        self._color_mode = COLOR_MODE_RGBWW
+        self._features = LightEntityFeature.TRANSITION | LightEntityFeature.FLASH
+        self._color_mode = ColorMode.RGBWW
+        self._supported_color_modes.add(ColorMode.RGBWW)
+        self._supported_color_modes.add(ColorMode.COLOR_TEMP)
+        self._supported_color_modes.add(ColorMode.HS)
+
         # Intentionally switching min and max here; it's inverted in the conversion.
         self._min_kelvin = convert_to_kelvin(kwargs[CONF_DEVICE_MIN_TEMP])
         self._max_kelvin = convert_to_kelvin(kwargs[CONF_DEVICE_MAX_TEMP])
