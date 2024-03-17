@@ -576,7 +576,6 @@ class DmxWhite(DmxBaseLight):
 
         self._color_mode = ColorMode.COLOR_TEMP
         self._supported_color_modes.add(ColorMode.COLOR_TEMP)
-        self._supported_color_modes.add(ColorMode.WHITE)
         # Intentionally switching min and max here; it's inverted in the conversion.
 
         self._min_kelvin = convert_to_kelvin(kwargs[CONF_DEVICE_MIN_TEMP])
