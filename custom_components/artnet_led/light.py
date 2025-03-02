@@ -993,7 +993,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
             vol.Coerce(int), vol.Range(min=1, max=50)
         ),
         vol.Optional(CONF_NODE_REFRESH, default=120): vol.All(
-            vol.Coerce(int), vol.Range(min=0, max=9999)
+            vol.Coerce(float), vol.Range(min=0, max=9999)
         ),
         vol.Optional(CONF_NODE_TYPE, default="artnet-direct"): vol.Any(
             None, vol.In(["artnet-direct", "artnet-controller", "sacn", "kinet"])

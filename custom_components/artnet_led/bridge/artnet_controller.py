@@ -18,7 +18,7 @@ HA_OEM = 0x2BE9
 
 class ArtNetController(BaseNode):
 
-    def __init__(self, hass: HomeAssistant, max_fps: int = 25, refresh_every: int = 2):
+    def __init__(self, hass: HomeAssistant, max_fps: int = 25, refresh_every: float = 2):
         super().__init__("", 0, max_fps=max_fps, refresh_every=0, start_refresh_task=False)
 
         self._hass = hass
