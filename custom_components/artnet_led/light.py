@@ -63,6 +63,11 @@ CONF_DEVICE_MIN_TEMP = "min_temp"
 CONF_DEVICE_MAX_TEMP = "max_temp"
 CONF_CHANNEL_SETUP = "channel_setup"
 
+
+CONF_SWAP_GREEN_BLUE = "swap_green_blue"
+CONF_RGB_OFFSETS = "rgb_offsets"
+
+
 DOMAIN = "dmx"
 
 AVAILABLE_CORRECTIONS = {"linear": pyartnet.output_correction.linear, "quadratic": pyartnet.output_correction.quadratic,
@@ -92,7 +97,7 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
     if len(real_host) == 0:
         real_host = host
     real_port = config.get(CONF_NODE_PORT_OVERRIDE)
-    if real_port == None:
+    if real_port is None:
         real_port = port
 
     # setup Node
@@ -111,9 +116,9 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
                 start_refresh_task=(refresh_interval > 0),
                 sequence_counter=True
             )
-            NODES[id] = __node
+            NODES[__id] = __node
 
-        node = NODES[id]
+        node = NODES[__id]
 
     elif client_type == "artnet-controller":
         if "server" not in NODES:
@@ -136,9 +141,9 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
                 start_refresh_task=(refresh_interval > 0),
                 source_name="ha-artnet-led"
             )
-            NODES[id] = __node
+            NODES[__id] = __node
 
-        node = NODES[id]
+        node = NODES[__id]
     elif client_type == "kinet":
         if real_port is None:
             real_port = KINET_DEFAULT_PORT
@@ -152,9 +157,9 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
                 refresh_every=refresh_interval,
                 start_refresh_task=(refresh_interval > 0),
             )
-            NODES[id] = __node
+            NODES[__id] = __node
 
-        node = NODES[id]
+        node = NODES[__id]
 
     else:
         raise NotImplementedError(f"Unknown client type '{client_type}'")
@@ -185,7 +190,7 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
 
             entity_id = f"light.{name.replace(' ', '_').lower()}"
 
-            # If the entity has another unique ID, use that until it's migrated properly
+            # Use existing entity's unique_id if available.
             entity = entity_registry.async_get(entity_id)
             if entity:
                 log.info(f"Found existing entity for name {entity_id}, using unique id {unique_id}")
@@ -193,25 +198,145 @@ async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, d
                     unique_id = entity.unique_id
             used_unique_ids.append(unique_id)
 
-            # create device
+            # Set new default options.
+            device.setdefault(CONF_SWAP_GREEN_BLUE, False)
+            device.setdefault(CONF_RGB_OFFSETS, [0, 1, 2])
+
+            # Create device.
             device["unique_id"] = unique_id
             d = cls(**device)  # type: DmxBaseLight
             d.set_type(device[CONF_DEVICE_TYPE])
+            
+            ################################################################
+            # NEW: group_dimmer logic:
+            ################################################################
+            if device[CONF_DEVICE_TYPE] == "group_dimmer":
+                group_count = device.get("group_count", 1)
+                channels = []
+                for i in range(group_count):
+                    ch = universe.add_channel(
+                        start=(channel + i),
+                        width=1,
+                        channel_name=f"{name}_ch{i+1}",
+                        byte_size=byte_size,
+                        byte_order=byte_order,
+                    )
+                    channels.append(ch)
+                d.set_group_channels(channels)
 
-            d.set_channel(
-                universe.add_channel(
+
+            ################################################################
+            # NEW Group RGB Logic):
+            ################################################################
+                
+            elif device[CONF_DEVICE_TYPE] == "group_rgb":
+                group_count = device.get("group_count", 1)
+                rgb_offsets = device.get(CONF_RGB_OFFSETS, [0, 1, 2])
+                # Decide how much to move for each sub-fixture:
+                # - If offsets == [0,1,2], that means standard consecutive R/G/B,
+                #   so each sub-fixture is 3 channels apart (3*i).
+                # - If offsets != [0,1,2], user likely has large offsets,
+                #   so each sub-fixture only moves +1 (i).
+                if rgb_offsets == [0, 1, 2]:
+                    sub_fixture_spacing = 3
+                else:
+                    sub_fixture_spacing = 1
+            
+                channels = []
+                for i in range(group_count):
+                    r_chan = universe.add_channel(
+                        start=(channel + sub_fixture_spacing * i + rgb_offsets[0]),
+                        width=1,
+                        channel_name=f"{name}_R{i+1}",
+                        byte_size=byte_size,
+                        byte_order=byte_order,
+                    )
+                    g_chan = universe.add_channel(
+                        start=(channel + sub_fixture_spacing * i + rgb_offsets[1]),
+                        width=1,
+                        channel_name=f"{name}_G{i+1}",
+                        byte_size=byte_size,
+                        byte_order=byte_order,
+                    )
+                    b_chan = universe.add_channel(
+                        start=(channel + sub_fixture_spacing * i + rgb_offsets[2]),
+                        width=1,
+                        channel_name=f"{name}_B{i+1}",
+                        byte_size=byte_size,
+                        byte_order=byte_order,
+                    )
+                    channels.extend([r_chan, g_chan, b_chan])
+            
+                d.set_group_channels(channels)
+                
+            ################################################################
+            # Existing logic for separate-channels (e.g. RGB with offsets):
+            ################################################################
+            elif device[CONF_DEVICE_TYPE] == "rgb":
+                # Check the RGB offsets.
+                rgb_offsets = device.get(CONF_RGB_OFFSETS, [0, 1, 2])
+                if rgb_offsets != [0, 1, 2]:
+                    red_channel = universe.add_channel(
+                        start=channel + rgb_offsets[0] - 1,
+                        width=1,
+                        channel_name=f"{name}_red",
+                        byte_size=byte_size,
+                        byte_order=byte_order,
+                    )
+                    green_channel = universe.add_channel(
+                        start=channel + rgb_offsets[1] - 1,
+                        width=1,
+                        channel_name=f"{name}_green",
+                        byte_size=byte_size,
+                        byte_order=byte_order,
+                    )
+                    blue_channel = universe.add_channel(
+                        start=channel + rgb_offsets[2] - 1,
+                        width=1,
+                        channel_name=f"{name}_blue",
+                        byte_size=byte_size,
+                        byte_order=byte_order,
+                    )
+                    # e.g. d.set_color_channels(red_channel, green_channel, blue_channel)
+                    if hasattr(d, "set_color_channels"):
+                        d.set_color_channels(red_channel, green_channel, blue_channel)
+                else:
+                    # Unified mode for an RGB device. 
+                    if d.channel_width <= 0:
+                        d._channel_width = 3
+                    ch = universe.add_channel(
+                        start=channel,
+                        width=d.channel_width,
+                        channel_name=d.name,
+                        byte_size=byte_size,
+                        byte_order=byte_order,
+                    )
+                    d.set_channel(ch)
+
+                    if hasattr(d.channel, "output_correction"):
+                        d.channel.output_correction = AVAILABLE_CORRECTIONS.get(device[CONF_OUTPUT_CORRECTION])
+
+            ################################################################
+            # Otherwise, default logic (e.g. normal dimmer, color_temp, etc.)
+            ################################################################
+            else:
+                # If the device is something else (e.g., "dimmer"), 
+                # we do the standard approach: create a single channel
+                if d.channel_width <= 0:
+                    # For a basic dimmer, typically 1 channel
+                    d._channel_width = 1
+                ch = universe.add_channel(
                     start=channel,
                     width=d.channel_width,
                     channel_name=d.name,
                     byte_size=byte_size,
                     byte_order=byte_order,
                 )
-            )
+                d.set_channel(ch)
 
-            d.channel.output_correction = AVAILABLE_CORRECTIONS.get(
-                device[CONF_OUTPUT_CORRECTION]
-            )
-
+                if hasattr(d.channel, "output_correction"):
+                    d.channel.output_correction = AVAILABLE_CORRECTIONS.get(device[CONF_OUTPUT_CORRECTION])
+            
             device_list.append(d)
 
             send_partial_universe = universe_cfg[CONF_SEND_PARTIAL_UNIVERSE]
@@ -282,17 +407,38 @@ class DmxBaseLight(LightEntity, RestoreEntity):
 
     @property
     def extra_state_attributes(self):
-        # TODO extra_state_attributes really shouldn't have lots of changing values like this, it pollutes the DB
-        data = {"type": self._type,
-                "dmx_channels": [
+        data = {
+            "type": self._type,
+            "values": self._vals,
+            "bright": self._attr_brightness
+        }
+        try:
+            # Check if separate channels are being used.
+            if hasattr(self, "_red_channel") and self._red_channel is not None:
+                data["dmx_channels"] = {
+                    "red": getattr(self._red_channel, "_start", None),
+                    "green": getattr(self._green_channel, "_start", None),
+                    "blue": getattr(self._blue_channel, "_start", None)
+                }
+                # Retrieve the DMX values from each channel, if available.
+                data["dmx_values"] = {
+                    "red": self._red_channel.get_values() if hasattr(self._red_channel, "get_values") else None,
+                    "green": self._green_channel.get_values() if hasattr(self._green_channel, "get_values") else None,
+                    "blue": self._blue_channel.get_values() if hasattr(self._blue_channel, "get_values") else None
+                }
+            elif hasattr(self, "_channel") and hasattr(self._channel, "_start"):
+                # Unified (single-channel) mode.
+                data["dmx_channels"] = [
                     k for k in range(
                         self._channel._start, self._channel._start + self._channel._width, 1
                     )
-                ],
-                "dmx_values": self._channel.get_values(),
-                "values": self._vals,
-                "bright": self._attr_brightness
-                }
+                ]
+                data["dmx_values"] = self._channel.get_values()
+            else:
+                data["dmx_channels"] = None
+                data["dmx_values"] = None
+        except Exception as e:
+            log.exception("Error computing extra_state_attributes: %s", e)
         self._channel_last_update = time.time()
         return data
 
@@ -376,17 +522,49 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         self._channel.set_fade(self.get_target_values(), transition * 1000)
 
     async def async_create_fade(self, **kwargs):
-        """Instruct the light to turn on"""
+        """
+        Instruct the light to turn on with fade.
+        Handles both:
+          - A single DMX channel (e.g. a dimmer or dimmer group).
+          - Three DMX channels (e.g. an RGB light with separate channels).
+        """
         self._state = True
-
         transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
-
-        self._channel.set_fade(
-            self.get_target_values(), transition * 1000
-        )
-
+        target_vals = self.get_target_values()
+    
+        if len(target_vals) == 3 and hasattr(self, "_red_channel") and self._red_channel is not None:
+            # We have an RGB-style setup with separate channels.
+            # Apply brightness scaling if needed.
+            red, green, blue = target_vals
+            if self._attr_brightness < 255:
+                red = int(red * self._attr_brightness / 255)
+                green = int(green * self._attr_brightness / 255)
+                blue = int(blue * self._attr_brightness / 255)
+    
+            # Send fade commands to each color channel.
+            self._red_channel.set_fade([red], transition * 1000)
+            self._green_channel.set_fade([green], transition * 1000)
+            self._blue_channel.set_fade([blue], transition * 1000)
+    
+        elif len(target_vals) == 1 and hasattr(self, "_channel") and self._channel is not None:
+            # We have a single-channel device (e.g. dimmer).
+            val = target_vals[0]
+            if self._attr_brightness < 255:
+                val = int(val * self._attr_brightness / 255)
+    
+            # Send fade command to single DMX channel.
+            if transition > 0:
+                self._channel.set_fade([val], transition * 1000)
+            else:
+                self._channel.set_values([val])
+    
+        else:
+            # You could either log a warning or handle other multi-channel cases.
+            log.warning("Unhandled channel configuration in async_create_fade. "
+                        f"target_vals={target_vals}")
+    
         self.async_schedule_update_ha_state()
-
+        
     async def async_turn_off(self, **kwargs):
         """
         Instruct the light to turn off. If a transition time has been specified in seconds
@@ -547,6 +725,22 @@ class DmxDimmer(DmxBaseLight):
     def get_target_values(self):
         return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._attr_brightness)
 
+    async def async_create_fade(self, **kwargs):
+        """
+        Override the base logic which assumes 3 channels.
+        Dimmer only has a single channel to fade.
+        """
+        self._state = True
+        transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
+        target_values = self.get_target_values()  # e.g. [brightness]
+
+        if transition > 0:
+            self._channel.set_fade(target_values, transition * 1000)
+        else:
+            self._channel.set_values(target_values)
+
+        self.async_schedule_update_ha_state()
+        
     async def async_turn_on(self, **kwargs):
 
         # Update state from service call
@@ -565,7 +759,87 @@ class DmxDimmer(DmxBaseLight):
         if old_state.state != STATE_OFF:
             await super().async_create_fade(brightness=self._attr_brightness, transition=0)
 
+class DmxDimmerGroup(DmxBaseLight):
+    CONF_TYPE = "group_dimmer"
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._channel_width = 1
+        self._features = LightEntityFeature.TRANSITION
+        self._color_mode = ColorMode.BRIGHTNESS
+        self._supported_color_modes.add(ColorMode.BRIGHTNESS)
+
+        self._group_count = kwargs.get("group_count", 1)
+        # Always define the attribute here, so it exists even before set_group_channels() is called
+        self._dimmer_channels: list[pyartnet.base.Channel] = []
+
+    def set_group_channels(self, channels: list[pyartnet.base.Channel]):
+        """Called from async_setup_platform to store all DMX channels for this group."""
+        self._dimmer_channels = channels
+        # If you want to do anything with each channel (like set callbacks), do it here:
+        for ch in channels:
+            if isinstance(ch, ChannelBridge):
+                ch.callback_values_updated = self._update_values
+
+    def set_channel(self, channel: pyartnet.base.Channel):
+        """
+        Overridden to do nothing since we're controlling multiple sub-channels.
+        The base code sometimes calls set_channel, so we define it but leave it blank.
+        """
+        pass
+
+    def _update_values(self, values: array[int]):
+        # If you need to react when a sub-channel updates, handle it here
+        self._channel_value_change()
+
+    def get_target_values(self) -> list[int]:
+        """Return a brightness value for each channel in the group."""
+        if not self._state:
+            # Off => all zero
+            return [0] * len(self._dimmer_channels)
+        # On => each channel uses the same brightness
+        return [self._attr_brightness] * len(self._dimmer_channels)
+
+    async def restore_state(self, old_state):
+        """Re-apply brightness/on-off status after HA restart."""
+        log.debug("Restoring state for group dimmer '%s': %s", self._name, old_state)
+
+        if old_state:
+            prev_brightness = old_state.attributes.get('bright')
+            if prev_brightness is not None:
+                self._attr_brightness = prev_brightness
+            if old_state.state.lower() == STATE_OFF:
+                self._state = False
+            else:
+                self._state = True
+
+        await self.async_create_fade()
+
+    async def async_turn_on(self, **kwargs):
+        self._state = True
+        if ATTR_BRIGHTNESS in kwargs:
+            self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
+        await self.async_create_fade(**kwargs)
+
+    async def async_turn_off(self, **kwargs):
+        self._state = False
+        await self.async_create_fade(**kwargs)
+
+    async def async_create_fade(self, **kwargs):
+        """
+        Override the base fade to handle multiple addresses rather than a single or triple.
+        """
+        transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
+        target_values = self.get_target_values()
+
+        for channel, val in zip(self._dimmer_channels, target_values):
+            if transition > 0:
+                channel.set_fade([val], transition * 1000)
+            else:
+                channel.set_values([val])
+
+        self.async_schedule_update_ha_state()
+        
 class DmxWhite(DmxBaseLight):
     CONF_TYPE = "color_temp"
 
@@ -663,79 +937,249 @@ class DmxRGB(DmxBaseLight):
         self._supported_color_modes.add(ColorMode.RGB)
         self._supported_color_modes.add(ColorMode.HS)
         self._vals = (255, 255, 255)
-
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "rgb"
         validate(self._channel_setup, self.CONF_TYPE)
+        self._auto_scale_white = ("w" in self._channel_setup or "W" in self._channel_setup)
+        # For overlapping channels (separate-channel mode) we will use these attributes.
+        # In unified mode, these remain None.
+        self._red_channel = None
+        self._green_channel = None
+        self._blue_channel = None
+        # Save our new options from configuration.
+        self._rgb_offsets = kwargs.get(CONF_RGB_OFFSETS, [0, 1, 2])
+        self._swap_green_blue = kwargs.get(CONF_SWAP_GREEN_BLUE, False)
 
-        self._channel_width = len(self._channel_setup)
-
-        self._auto_scale_white = "w" in self._channel_setup or "W" in self._channel_setup
+    def set_color_channels(self, red_channel, green_channel, blue_channel):
+        """Assign individual DMX channels for red, green, and blue."""
+        self._red_channel = red_channel
+        self._green_channel = green_channel
+        self._blue_channel = blue_channel
 
     @property
     def rgb_color(self) -> tuple:
-        """Return the rgb color value."""
+        """Return the current RGB color as a tuple."""
         return self._vals
+
+    def get_target_values(self):
+        """
+        When using separate channels, return the current RGB values (applying swap if enabled).
+        In unified mode, this method is used by to_values to build a full DMX frame.
+        """
+        red, green, blue = self._vals
+        if self._swap_green_blue:
+            green, blue = blue, green
+        return (red, green, blue)
 
     def _update_values(self, values: array[int]):
         self._state, self._attr_brightness, red, green, blue, _, _, _ = \
             from_values(self._channel_setup, self.channel_size[1], values)
-
         self._vals = (red, green, blue)
-
         self._channel_value_change()
-
-    def get_target_values(self):
-        red = self._vals[0]
-        green = self._vals[1]
-        blue = self._vals[2]
-
-        if self._auto_scale_white:
-            red, green, blue, white = color_rgb_to_rgbw(red, green, blue)
-        else:
-            white = -1
-
-        return to_values(self._channel_setup, self._channel_size[1], self.is_on, self._attr_brightness, red, green,
-                         blue,
-                         white)
 
     async def async_turn_on(self, **kwargs):
         """
-        Instruct the light to turn on.
+        Update the light's state from service call parameters and then delegate to async_create_fade.
         """
-
         old_values = self._vals
         old_brightness = self._attr_brightness
-
-        # RGB already contains brightness information
         if ATTR_RGB_COLOR in kwargs:
             self._vals = kwargs[ATTR_RGB_COLOR]
-
         if ATTR_HS_COLOR in kwargs:
             hue, sat = kwargs[ATTR_HS_COLOR]
             self._vals = color_util.color_hs_to_RGB(hue, sat)
-
         if ATTR_BRIGHTNESS in kwargs:
             self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
-
         if ATTR_FLASH in kwargs:
             await super().flash(old_values, old_brightness, **kwargs)
         else:
-            await super().async_create_fade(**kwargs)
-
+            await self.async_create_fade(**kwargs)
         return None
 
-    async def restore_state(self, old_state):
-        log.debug("Added rgb to hass. Try restoring state.")
+    async def async_create_fade(self, **kwargs):
+        """
+        Instruct the light to fade on.
+        If separate channels are defined (i.e. _red_channel is not None), send individual fade
+        commands on each channel; otherwise, build a full DMX frame for the unified channel.
+        """
+        self._state = True
+        transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
+        if self._red_channel is not None:
+            # Separate-channel mode.
+            red, green, blue = self.get_target_values()
+            # Apply brightness scaling if needed.
+            if self._attr_brightness < 255:
+                red = int(red * self._attr_brightness / 255)
+                green = int(green * self._attr_brightness / 255)
+                blue = int(blue * self._attr_brightness / 255)
+            self._red_channel.set_fade([red], transition * 1000)
+            self._green_channel.set_fade([green], transition * 1000)
+            self._blue_channel.set_fade([blue], transition * 1000)
+        else:
+            # Unified mode: build the full DMX frame using the helper function.
+            target = to_values(self._channel_setup,
+                               self._channel_size[1],
+                               self.is_on,
+                               self._attr_brightness,
+                               *self._vals)
+            self._channel.set_fade(target, transition * 1000)
+        self.async_schedule_update_ha_state()
 
+    async def restore_state(self, old_state):
+        """
+        Restore the light's previous state.
+        Make sure to call our own async_create_fade so that the unified vs separate-channel branch is used.
+        """
+        log.debug("Added rgb to hass. Try restoring state.")
         if old_state:
             prev_vals = old_state.attributes.get('values')
-            self._vals = prev_vals
+            self._vals = prev_vals if prev_vals is not None else (255, 255, 255)
             prev_brightness = old_state.attributes.get('bright')
-            self._attr_brightness = prev_brightness
+            self._attr_brightness = prev_brightness if prev_brightness is not None else 255
+
+        if not hasattr(self, '_swap_green_blue'):
+            self._swap_green_blue = False
+        if not hasattr(self, '_rgb_offsets'):
+            self._rgb_offsets = [0, 1, 2]
 
         if old_state.state != STATE_OFF:
-            await super().async_create_fade(brightness=self._attr_brightness, rgb_color=self._vals, transition=0)
+            await self.async_create_fade(brightness=self._attr_brightness, rgb_color=self._vals, transition=0)
 
+class DmxRGBGroup(DmxBaseLight):
+    """
+    A grouped RGB device, controlling N sets of R/G/B channels
+    as one logical RGB light in Home Assistant.
+    """
+    CONF_TYPE = "group_rgb"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._features = LightEntityFeature.TRANSITION | LightEntityFeature.FLASH
+        self._color_mode = ColorMode.RGB
+        self._supported_color_modes.add(ColorMode.RGB)
+        self._supported_color_modes.add(ColorMode.HS)
+
+        # One color is used for the entire group
+        self._vals = (255, 255, 255)  # (R, G, B)
+        self._rgb_offsets = kwargs.get(CONF_RGB_OFFSETS, [0, 1, 2])
+        self._swap_green_blue = kwargs.get(CONF_SWAP_GREEN_BLUE, False)
+
+        # group_count sets of RGB channels
+        self._group_count = kwargs.get("group_count", 1)
+
+        # We'll store the channels for every sub-RGB set:
+        # total channels = group_count * 3
+        self._rgb_channels = []
+
+    def set_group_channels(self, channels: list[pyartnet.base.Channel]):
+        """
+        Called from async_setup_platform once the channels are allocated.
+        `channels` should be in the order: 
+          R1, G1, B1, R2, G2, B2, ... up to group_count * 3.
+        """
+        self._rgb_channels = channels
+
+    def set_channel(self, channel: pyartnet.base.Channel):
+        """
+        Overridden to do nothing for group mode since we create multiple channels.
+        """
+        pass
+
+    def get_target_values(self) -> list[int]:
+        """
+        Returns a DMX value for each channel in the group.
+        For each sub-RGB set, we replicate the same color.
+        """
+        # If the entity is off, all channels = 0
+        if not self._state:
+            return [0] * (self._group_count * 3)
+
+        # On => replicate (r, g, b) across group_count sets
+        r, g, b = self._vals
+        if self._swap_green_blue:
+            g, b = b, g
+
+        # Example: if group_count=2 and color=(128,64,10),
+        # we want [128,64,10, 128,64,10]
+        values = []
+        for _ in range(self._group_count):
+            values.extend([r, g, b])
+        return values
+
+    async def async_create_fade(self, **kwargs):
+        """
+        Fade each channel in the group. The base class tries 
+        to handle 1 or 3 channels, so we override for 3*N.
+        """
+        transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
+        target_values = self.get_target_values()  # length = group_count * 3
+
+        # If brightness < 255, scale them
+        # Alternatively, you can store brightness in self._attr_brightness 
+        # and incorporate it in get_target_values, but we do it here:
+        if self._attr_brightness < 255 and self._attr_brightness >= 0:
+            target_values = [
+                int(v * self._attr_brightness / 255) for v in target_values
+            ]
+
+        # Now send fade commands to each channel
+        # zip the channels with their corresponding DMX value
+        for ch, val in zip(self._rgb_channels, target_values):
+            if transition > 0:
+                ch.set_fade([val], transition * 1000)
+            else:
+                ch.set_values([val])
+
+        self.async_schedule_update_ha_state()
+
+    async def async_turn_on(self, **kwargs):
+        """
+        Turn on the grouped RGB device. 
+        We'll parse optional rgb_color or hs_color, brightness, etc.
+        """
+        self._state = True
+        if ATTR_RGB_COLOR in kwargs:
+            self._vals = kwargs[ATTR_RGB_COLOR]
+        if ATTR_HS_COLOR in kwargs:
+            hue, sat = kwargs[ATTR_HS_COLOR]
+            self._vals = color_util.color_hs_to_RGB(hue, sat)
+        if ATTR_BRIGHTNESS in kwargs:
+            self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
+        if ATTR_FLASH in kwargs:
+            # If you want a flash effect, adapt from the base 
+            # or do your own approach
+            old_vals = self._vals
+            old_brightness = self._attr_brightness
+            await super().flash(old_vals, old_brightness, **kwargs)
+        else:
+            await self.async_create_fade(**kwargs)
+
+    async def async_turn_off(self, **kwargs):
+        self._state = False
+        await self.async_create_fade(**kwargs)
+
+    async def restore_state(self, old_state):
+        """
+        Attempt to restore color, brightness, and on/off state.
+        """
+        log.debug("Restoring state for group rgb '%s': %s", self._name, old_state)
+        if old_state:
+            # old_state.attributes.get('values') might be your last color 
+            prev_vals = old_state.attributes.get('values')
+            # If we stored (red, green, blue) in 'values', 
+            # we can restore it:
+            if prev_vals is not None and len(prev_vals) >= 3:
+                self._vals = (prev_vals[0], prev_vals[1], prev_vals[2])
+
+            prev_brightness = old_state.attributes.get('bright')
+            if prev_brightness is not None:
+                self._attr_brightness = prev_brightness
+
+            if old_state.state.lower() == STATE_OFF:
+                self._state = False
+            else:
+                self._state = True
+
+        await self.async_create_fade()
 
 class DmxRGBW(DmxBaseLight):
     CONF_TYPE = "rgbw"
@@ -936,7 +1380,7 @@ class DmxRGBWW(DmxBaseLight):
 # conf
 # ------------------------------------------------------------------------------
 
-__CLASS_LIST = [DmxDimmer, DmxRGB, DmxWhite, DmxRGBW, DmxRGBWW, DmxBinary, DmxFixed]
+__CLASS_LIST = [DmxDimmer, DmxRGB, DmxWhite, DmxRGBW, DmxRGBWW, DmxBinary, DmxFixed, DmxDimmerGroup, DmxRGBGroup]
 __CLASS_TYPE = {k.CONF_TYPE: k for k in __CLASS_LIST}
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
@@ -981,6 +1425,9 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
                             vol.Optional(CONF_CHANNEL_SETUP, default=None): vol.Any(
                                 None, cv.string, cv.ensure_list
                             ),
+                            vol.Optional(CONF_SWAP_GREEN_BLUE, default=False): bool,
+                            vol.Optional(CONF_RGB_OFFSETS, default=[0, 1, 2]): vol.All([vol.Coerce(int)]),
+                            vol.Optional("group_count", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
                         }
                     ],
                 )
